@@ -1,0 +1,6 @@
+{
+  "name": "KDP Book & Puzzle Studio",
+  "description": "Professional creator platform and editor for designing Amazon KDP puzzle books, coloring books, journals, planners, and custom printable interiors.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
