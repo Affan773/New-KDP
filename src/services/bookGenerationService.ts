@@ -17,6 +17,7 @@ import { DocumentModel, PageModel, Project, TrimSize } from '../types/project';
 import { PageCompositionEngine } from './pageCompositionEngine';
 import { TocService } from './tocService';
 import { AnswerKeyService, normalizeAnswerKeyMode } from './answerKeyService';
+import { FrontMatterService, DEFAULT_FRONT_MATTER_CONFIG } from './frontMatterService';
 
 export interface BookGenerationRequest {
   metadata: BookMetadata;
@@ -523,7 +524,9 @@ export class BookGenerationService {
 
     onProgress?.({ percent: 100, stage: 'Book manuscript created successfully!' });
 
-    return { project, document, puzzles: allGeneratedPuzzles };
+    const { sanitizedDocument, sanitizedProject } = FrontMatterService.sanitizeBookStructure(document, project, frontMatter);
+
+    return { project: sanitizedProject, document: sanitizedDocument, puzzles: allGeneratedPuzzles };
   }
 
   /**
@@ -542,13 +545,14 @@ export class BookGenerationService {
     onProgress?: (event: GenerationProgressEvent) => void,
     signal?: AbortSignal
   ): Promise<{ project: Project; document: DocumentModel; puzzles: GeneratedPuzzle[] }> {
+    const sanitizedPlan = FrontMatterService.sanitizeAIBookPlan(plan);
     const { trimSize, bleed, paperType, theme, puzzlesPerPage = 1, author = 'KDP Publishing Studio' } = options;
 
     const sections: BookSection[] = [];
     const puzzleBatches: PuzzleBatchItemConfig[] = [];
 
-    const planSections = plan.sections || [
-      { title: 'Chapter 1: Themed Puzzles', puzzleType: 'word_search', count: plan.totalPuzzles || 30, difficulty: 'Medium', theme: plan.topic || 'Brain Teasers' }
+    const planSections = sanitizedPlan.sections || [
+      { title: 'Chapter 1: Themed Puzzles', puzzleType: 'word_search', count: sanitizedPlan.totalPuzzles || 30, difficulty: 'Medium', theme: sanitizedPlan.topic || 'Brain Teasers' }
     ];
 
     planSections.forEach((sec: any, idx: number) => {
@@ -568,47 +572,53 @@ export class BookGenerationService {
         count: sec.count || 10,
         difficulty: sec.difficulty || 'Medium',
         sectionTitle: sec.title,
-        theme: sec.theme || plan.topic || 'General',
+        theme: sec.theme || sanitizedPlan.topic || 'General',
         gridWidth: sec.puzzleType === 'sudoku' ? 9 : 15,
         gridHeight: sec.puzzleType === 'sudoku' ? 9 : 15,
       });
     });
 
-    const frontMatter: FrontMatterConfig = {
-      includeTitlePage: plan.frontMatter?.includeTitlePage ?? true,
-      includeCopyrightPage: plan.frontMatter?.includeCopyright ?? true,
+    const frontMatter: FrontMatterConfig = FrontMatterService.normalizeConfig({
+      includeTitlePage: sanitizedPlan.frontMatter?.includeTitlePage ?? true,
+      includeCopyrightPage: sanitizedPlan.frontMatter?.includeCopyright ?? false,
+      includeInstructionsPage: sanitizedPlan.frontMatter?.includeInstructions ?? false,
+      includeTableOfContents: sanitizedPlan.frontMatter?.includeTOC ?? false,
       includeDisclaimerPage: false,
-      includeInstructionsPage: plan.frontMatter?.includeInstructions ?? true,
       includeIntroPage: false,
-      includeTableOfContents: plan.frontMatter?.includeTOC ?? true,
-    };
+    });
 
     const answerKey: AnswerKeySettings = {
-      mode: (plan.backMatter?.answerKeyMode as any) || 'end_of_book',
-      puzzlesPerPage: ((plan.backMatter?.puzzlesPerSolutionPage as any) || 4) as 1 | 2 | 4 | 6,
+      mode: (sanitizedPlan.backMatter?.answerKeyMode as any) || 'end_of_book',
+      puzzlesPerPage: ((sanitizedPlan.backMatter?.puzzlesPerSolutionPage as any) || 4) as 1 | 2 | 4 | 6,
       includeTitle: true,
       sectionLabels: true,
       startOnNewPage: true,
     };
 
     const metadata: BookMetadata = {
-      title: plan.title || 'AI Generated Puzzle Book',
-      subtitle: plan.subtitle || 'Challenging & Relaxing Brain Games',
+      title: sanitizedPlan.title || 'AI Generated Puzzle Book',
+      subtitle: sanitizedPlan.subtitle || 'Challenging & Relaxing Brain Games',
       author,
       publisher: 'Independently Published',
       category: 'Activity & Puzzle Books',
-      description: plan.description || '',
-      keywords: plan.keywords || ['puzzle book', 'brain workout', 'amazon kdp'],
+      description: sanitizedPlan.description || '',
+      keywords: sanitizedPlan.keywords || ['puzzle book', 'brain workout', 'amazon kdp'],
       copyrightYear: new Date().getFullYear().toString(),
       seriesName: '',
       volumeNumber: '',
       edition: '1st Edition',
     };
 
+    const frontMatterCount =
+      (frontMatter.includeTitlePage ? 1 : 0) +
+      (frontMatter.includeCopyrightPage ? 1 : 0) +
+      (frontMatter.includeInstructionsPage ? 1 : 0) +
+      (frontMatter.includeTableOfContents ? 1 : 0);
+
     const numbering: PageNumberingSettings = {
       enabled: true,
       startPageNumber: 1,
-      startPageIndex: (frontMatter.includeTitlePage ? 1 : 0) + (frontMatter.includeCopyrightPage ? 1 : 0),
+      startPageIndex: frontMatterCount,
       frontMatterStyle: 'none',
       bodyStyle: 'arabic',
       position: 'bottom-center',

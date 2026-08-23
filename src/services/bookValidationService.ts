@@ -428,6 +428,47 @@ export class BookValidationService {
       });
     }
 
+    // 5.8 Front Matter Consistency Checks
+    const fmConfig = project.bookSettings?.frontMatter;
+    if (fmConfig && pages.length > 0) {
+      const hasInstructionsPage = pages.some(p => p.pageType === 'instructions' || p.name?.toLowerCase().includes('instructions') || p.name?.toLowerCase().includes('how to solve'));
+      const hasCopyrightPage = pages.some(p => p.pageType === 'copyright' || p.name?.toLowerCase().includes('copyright'));
+
+      if (!fmConfig.includeInstructionsPage && hasInstructionsPage) {
+        issues.push({
+          id: 'val-info-disabled-instructions-present',
+          severity: 'info',
+          category: 'document',
+          title: 'How to Solve Page Excluded in Settings',
+          message: 'An instructions page exists in the manuscript but is turned OFF in Book Settings.',
+          fixSuggestion: 'Click [Apply & Reflow Interior] in Book Settings to remove disabled pages.',
+        });
+      }
+
+      if (!fmConfig.includeCopyrightPage && hasCopyrightPage) {
+        issues.push({
+          id: 'val-info-disabled-copyright-present',
+          severity: 'info',
+          category: 'document',
+          title: 'Copyright Page Excluded in Settings',
+          message: 'A copyright page exists in the manuscript but is turned OFF in Book Settings.',
+          fixSuggestion: 'Click [Apply & Reflow Interior] in Book Settings to remove disabled pages.',
+        });
+      }
+    }
+
+    // 5.9 Spine Width & Page Count Synchronization Check
+    if (project.kdpConfig?.contentVersion?.coverOutdated) {
+      issues.push({
+        id: 'val-warn-spine-outdated',
+        severity: 'warning',
+        category: 'layout',
+        title: 'Cover Spine Outdated',
+        message: project.kdpConfig.contentVersion.outdatedReason || 'Interior page count changed. Spine width must be recalculated.',
+        fixSuggestion: 'Regenerate Cover in KDP Publishing to update spine thickness.',
+      });
+    }
+
     // Calculate Summary Counts
     const errorsCount = issues.filter(i => i.severity === 'error').length;
     const warningsCount = issues.filter(i => i.severity === 'warning').length;

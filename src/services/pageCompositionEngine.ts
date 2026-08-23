@@ -259,6 +259,148 @@ Printed for Amazon KDP Print on Demand.`;
   }
 
   /**
+   * Composes Table of Contents Page
+   */
+  static composeTocPage(
+    projectId: string,
+    pageNumber: number,
+    title: string,
+    entries: { label: string; pageNumber: number }[],
+    theme: BookTheme,
+    bounds: ReturnType<typeof PageCompositionEngine.getPageBounds>
+  ): PageModel {
+    const elements: CanvasElement[] = [];
+    const centerX = bounds.marginInsidePx;
+    const contentW = bounds.contentWidth;
+
+    elements.push({
+      id: `el-toc-header-${Date.now()}`,
+      type: 'text',
+      name: 'Table of Contents Header',
+      content: 'TABLE OF CONTENTS',
+      x: centerX,
+      y: 60,
+      width: contentW,
+      height: 40,
+      rotation: 0,
+      zIndex: 1,
+      opacity: 1,
+      fontFamily: theme.fontHeading,
+      fontSize: Math.min(22, theme.headingSize),
+      fontWeight: '800',
+      textAlign: 'center',
+      color: theme.primaryColor,
+      letterSpacing: 1.5,
+      lineHeight: 1.2,
+    });
+
+    const tocContent =
+      entries.length > 0
+        ? entries.map(e => `${e.label.padEnd(36, '.')} Page ${e.pageNumber}`).join('\n\n')
+        : `• Puzzles & Challenges ..................... Page 2\n\n• Solutions & Answer Keys .................. Back of Book`;
+
+    elements.push({
+      id: `el-toc-content-${Date.now()}`,
+      type: 'text',
+      name: 'TOC List',
+      content: tocContent,
+      x: centerX + 20,
+      y: 120,
+      width: contentW - 40,
+      height: 350,
+      rotation: 0,
+      zIndex: 2,
+      opacity: 1,
+      fontFamily: theme.fontBody,
+      fontSize: 12,
+      fontWeight: '500',
+      textAlign: 'left',
+      color: theme.primaryColor,
+      lineHeight: 1.8,
+    });
+
+    return {
+      id: `page-${projectId}-toc`,
+      pageNumber,
+      pageType: 'toc',
+      name: 'Table of Contents',
+      backgroundColor: '#FFFFFF',
+      elements,
+      notes: 'Front Matter - Table of Contents',
+    };
+  }
+
+  /**
+   * Composes Disclaimer Page
+   */
+  static composeDisclaimerPage(
+    projectId: string,
+    pageNumber: number,
+    metadata: BookMetadata,
+    theme: BookTheme,
+    bounds: ReturnType<typeof PageCompositionEngine.getPageBounds>
+  ): PageModel {
+    const elements: CanvasElement[] = [];
+    const centerX = bounds.marginInsidePx;
+    const contentW = bounds.contentWidth;
+
+    elements.push({
+      id: `el-disc-header-${Date.now()}`,
+      type: 'text',
+      name: 'Disclaimer Header',
+      content: 'DISCLAIMER & NOTICE',
+      x: centerX,
+      y: 80,
+      width: contentW,
+      height: 40,
+      rotation: 0,
+      zIndex: 1,
+      opacity: 1,
+      fontFamily: theme.fontHeading,
+      fontSize: 18,
+      fontWeight: '800',
+      textAlign: 'center',
+      color: theme.primaryColor,
+      letterSpacing: 1.5,
+      lineHeight: 1.2,
+    });
+
+    const disclaimerText =
+      metadata.disclaimer ||
+      `This book is created for entertainment, puzzle solving, and educational purposes. All puzzle designs and layouts are curated for high-quality printing. While every effort is made to ensure accurate solutions, minor typographical variations may occur.`;
+
+    elements.push({
+      id: `el-disc-body-${Date.now()}`,
+      type: 'text',
+      name: 'Disclaimer Content',
+      content: disclaimerText,
+      x: centerX + 20,
+      y: 150,
+      width: contentW - 40,
+      height: 250,
+      rotation: 0,
+      zIndex: 2,
+      opacity: 1,
+      fontFamily: theme.fontBody,
+      fontSize: 11,
+      fontWeight: '400',
+      textAlign: 'left',
+      color: theme.secondaryColor,
+      lineHeight: 1.6,
+    });
+
+    return {
+      id: `page-${projectId}-disclaimer`,
+      pageNumber,
+      pageType: 'disclaimer',
+      name: 'Disclaimer Page',
+      backgroundColor: '#FFFFFF',
+      elements,
+      notes: 'Front Matter - Disclaimer',
+    };
+  }
+
+  /**
    * Composes Instructions Page for puzzle types
    */
   static composeInstructionsPage(

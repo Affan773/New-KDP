@@ -162,6 +162,37 @@ export interface FrontMatterConfig {
   introText?: string;
 }
 
+export interface CentralizedFrontMatterConfig {
+  titlePage: boolean;
+  copyrightPage: boolean;
+  howToSolvePage: boolean;
+  tableOfContents?: boolean;
+  disclaimerPage?: boolean;
+  introPage?: boolean;
+}
+
+export const DEFAULT_FRONT_MATTER_CONFIG: FrontMatterConfig = {
+  includeTitlePage: true,
+  includeCopyrightPage: false,
+  includeInstructionsPage: false,
+  includeDisclaimerPage: false,
+  includeIntroPage: false,
+  includeTableOfContents: false,
+  copyrightText: '',
+  disclaimerText: '',
+  instructionsText: '',
+  introText: '',
+};
+
+export const DEFAULT_CENTRALIZED_FRONT_MATTER: CentralizedFrontMatterConfig = {
+  titlePage: true,
+  copyrightPage: false,
+  howToSolvePage: false,
+  tableOfContents: false,
+  disclaimerPage: false,
+  introPage: false,
+};
+
 export interface PuzzleBatchItemConfig {
   id: string;
   puzzleType: PuzzleType;

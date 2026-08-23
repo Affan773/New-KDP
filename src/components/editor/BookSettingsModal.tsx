@@ -15,6 +15,10 @@ import {
   Type,
   FileCheck,
   Hash,
+  RotateCcw,
+  FileText,
+  HelpCircle,
+  ArrowRight,
 } from 'lucide-react';
 import {
   calculateKdpCoverDimensions,
@@ -30,28 +34,31 @@ import {
   BookMetadata,
   BookProjectSettings,
   BookTheme,
+  CentralizedFrontMatterConfig,
+  FrontMatterConfig,
   HeaderFooterSettings,
   PageNumberingSettings,
 } from '../../types/book';
 import { BleedType, Orientation, Project, TrimSize } from '../../types/project';
 import { KdpProjectTab } from '../kdp/KdpProjectTab';
+import { FrontMatterService, DEFAULT_FRONT_MATTER_CONFIG } from '../../services/frontMatterService';
 
 interface BookSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  defaultTab?: 'metadata' | 'kdp' | 'trim' | 'headerFooter' | 'numbering' | 'theme' | 'preflight';
+  defaultTab?: 'metadata' | 'interior' | 'kdp' | 'trim' | 'headerFooter' | 'numbering' | 'theme' | 'preflight';
 }
 
 export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
   isOpen,
   onClose,
-  defaultTab = 'metadata',
+  defaultTab = 'interior',
 }) => {
-  const { activeProject, updateProject } = useApp();
-  const { document } = useEditor();
+  const { activeProject, updateProject, showToast } = useApp();
+  const { document, updateDocument } = useEditor();
 
   const [activeTab, setActiveTab] = useState<
-    'metadata' | 'kdp' | 'trim' | 'headerFooter' | 'numbering' | 'theme' | 'preflight'
+    'metadata' | 'interior' | 'kdp' | 'trim' | 'headerFooter' | 'numbering' | 'theme' | 'preflight'
   >(defaultTab);
 
   // Local editable state initialized with safe defaults
@@ -67,6 +74,12 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
     isbn: activeProject?.metadata?.isbn || '',
     copyrightYear: activeProject?.metadata?.copyrightYear || new Date().getFullYear().toString(),
   });
+
+  const [frontMatter, setFrontMatter] = useState<FrontMatterConfig>(() =>
+    FrontMatterService.normalizeConfig(activeProject?.bookSettings?.frontMatter || DEFAULT_FRONT_MATTER_CONFIG)
+  );
+
+  const [isReflowing, setIsReflowing] = useState(false);
 
   const [trimSize, setTrimSize] = useState<TrimSize>(
     activeProject?.kdpSettings?.trimSize || STANDARD_TRIM_SIZES[0]
@@ -129,6 +142,10 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
       copyrightYear: activeProject.metadata?.copyrightYear || new Date().getFullYear().toString(),
     });
 
+    setFrontMatter(
+      FrontMatterService.normalizeConfig(activeProject.bookSettings?.frontMatter || DEFAULT_FRONT_MATTER_CONFIG)
+    );
+
     setTrimSize(activeProject.kdpSettings?.trimSize || STANDARD_TRIM_SIZES[0]);
     setPaperType(activeProject.kdpSettings?.paperType || 'White');
     setBleed(activeProject.kdpSettings?.bleed || 'No Bleed');
@@ -158,7 +175,62 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
     document
   );
 
+  const handleReflowDocument = () => {
+    if (!activeProject || !document) return;
+    setIsReflowing(true);
+    try {
+      const reflowRes = FrontMatterService.reflowDocumentPages({
+        project: activeProject,
+        document,
+        config: frontMatter,
+        theme: selectedTheme,
+      });
+
+      updateDocument(reflowRes.updatedDocument);
+      updateProject(reflowRes.updatedProject);
+
+      if (reflowRes.pageCountChanged) {
+        showToast({
+          type: 'warning',
+          title: 'Page Count Updated',
+          message: `Interior reflowed from ${reflowRes.oldPageCount} to ${reflowRes.newPageCount} pages. Cover marked as OUTDATED for spine recalculation.`,
+        });
+      } else {
+        showToast({
+          type: 'success',
+          title: 'Interior Reflowed',
+          message: 'Front matter pages updated. Puzzles and answer keys retained without blank pages.',
+        });
+      }
+    } catch (err: any) {
+      console.error('Reflow failed:', err);
+      showToast({
+        type: 'error',
+        title: 'Reflow Failed',
+        message: err?.message || 'Could not reflow front matter pages.',
+      });
+    } finally {
+      setIsReflowing(false);
+    }
+  };
+
   const handleSave = () => {
+    let finalProject = activeProject;
+    let finalDocument = document;
+
+    // If document is present, ensure front matter reflow is synchronized
+    if (document) {
+      const reflowRes = FrontMatterService.reflowDocumentPages({
+        project: activeProject,
+        document,
+        config: frontMatter,
+        theme: selectedTheme,
+      });
+      finalProject = reflowRes.updatedProject;
+      finalDocument = reflowRes.updatedDocument;
+      updateDocument(finalDocument);
+    }
+
     const updatedBookSettings: BookProjectSettings = {
       schemaVersion: 4,
       metadata,
@@ -180,23 +252,16 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
         dotLeaders: true,
         includeFrontMatter: false,
       },
-      frontMatter: currentBookSettings?.frontMatter || {
-        includeTitlePage: true,
-        includeCopyrightPage: true,
-        includeDisclaimerPage: false,
-        includeInstructionsPage: true,
-        includeIntroPage: false,
-        includeTableOfContents: true,
-      },
+      frontMatter,
       puzzleNumberingStyle: 'continuous',
     };
 
     const updatedProject: Project = {
-      ...activeProject,
+      ...finalProject,
       name: metadata.title,
       description: metadata.description || activeProject.description,
       kdpSettings: {
-        ...activeProject.kdpSettings,
+        ...finalProject.kdpSettings,
         trimSize,
         paperType,
         bleed,
@@ -205,13 +270,17 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
         coverHeightInches: coverDims.height,
       },
       metadata: {
-        ...activeProject.metadata,
+        ...finalProject.metadata,
         ...metadata,
       },
       bookSettings: updatedBookSettings,
     };
 
     updateProject(updatedProject);
+    showToast({
+      type: 'success',
+      message: 'Book settings and interior saved successfully.',
+    });
     onClose();
   };
 
@@ -254,6 +323,7 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
         {/* Tab Navigation */}
         <div className="px-5 border-b border-neutral-100 dark:border-neutral-800 flex gap-2 overflow-x-auto bg-neutral-50/50 dark:bg-neutral-900/50 text-xs font-semibold">
           {[
+            { id: 'interior', label: 'Interior & Front Matter' },
             { id: 'kdp', label: 'Amazon KDP Publishing' },
             { id: 'metadata', label: 'Metadata & Info' },
             { id: 'trim', label: 'Trim & Paper' },
@@ -282,6 +352,201 @@ export const BookSettingsModal: React.FC<BookSettingsModalProps> = ({
 
         {/* Tab Body Content */}
         <div className="p-6 overflow-y-auto flex-1 space-y-5">
+          {/* INTERIOR & FRONT MATTER */}
+          {activeTab === 'interior' && (
+            <div className="space-y-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-sm font-bold text-neutral-900 dark:text-white flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-amber-500" />
+                    <span>Front Matter Page Configuration</span>
+                  </h3>
+                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                    Control introductory pages in your book interior. Disabled pages are excluded completely without leaving empty or blank pages.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleReflowDocument}
+                  disabled={isReflowing}
+                  className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs transition-all shadow-xs flex items-center gap-1.5 shrink-0"
+                >
+                  <RotateCcw className={`w-3.5 h-3.5 ${isReflowing ? 'animate-spin' : ''}`} />
+                  <span>{isReflowing ? 'Reflowing...' : 'Apply & Reflow Interior'}</span>
+                </button>
+              </div>
+
+              {/* Informational banner */}
+              <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2.5">
+                <Info className="w-4 h-4 shrink-0 text-amber-500" />
+                <span>Disabled pages will not be included in the generated interior.</span>
+              </div>
+
+              {/* Front matter toggles */}
+              <div className="space-y-3">
+                <label className="block text-xs font-bold uppercase tracking-wider text-neutral-500">
+                  Front Matter Pages
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[
+                    {
+                      key: 'includeTitlePage',
+                      label: 'Title / Opening Page',
+                      desc: 'Centered book title, subtitle, author, and publisher imprint.',
+                      defaultStatus: 'Default: ON',
+                    },
+                    {
+                      key: 'includeCopyrightPage',
+                      label: 'Copyright Page',
+                      desc: '© notice, rights reservation, edition, and ISBN legal information.',
+                      defaultStatus: 'Default: OFF',
+                    },
+                    {
+                      key: 'includeInstructionsPage',
+                      label: 'How to Solve the Puzzles',
+                      desc: 'Solving rules & guidelines for each puzzle type in the book.',
+                      defaultStatus: 'Default: OFF',
+                    },
+                    {
+                      key: 'includeTableOfContents',
+                      label: 'Table of Contents',
+                      desc: 'Dynamic chapter & section index with page numbers.',
+                      defaultStatus: 'Optional',
+                    },
+                    {
+                      key: 'includeDisclaimerPage',
+                      label: 'Disclaimer Page',
+                      desc: 'Publisher disclaimer & reader informational notice.',
+                      defaultStatus: 'Optional',
+                    },
+                  ].map(item => {
+                    const isChecked = (frontMatter as any)[item.key];
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        onClick={() =>
+                          setFrontMatter({
+                            ...frontMatter,
+                            [item.key]: !isChecked,
+                          })
+                        }
+                        className={`p-4 rounded-2xl border text-left transition-all flex items-start gap-3 ${
+                          isChecked
+                            ? 'border-amber-500 bg-amber-500/10 shadow-xs ring-1 ring-amber-500'
+                            : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700 bg-neutral-50/40 dark:bg-neutral-800/40'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          readOnly
+                          className="mt-1 accent-amber-500 rounded-md"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-sm text-neutral-900 dark:text-white truncate">
+                              {item.label}
+                            </span>
+                            <span
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded-full font-bold ${
+                                isChecked
+                                  ? 'bg-amber-500 text-neutral-950'
+                                  : 'bg-neutral-200 dark:bg-neutral-700 text-neutral-600 dark:text-neutral-300'
+                              }`}
+                            >
+                              {isChecked ? 'ON' : 'OFF'}
+                            </span>
+                          </div>
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                            {item.desc}
+                          </p>
+                          <span className="inline-block mt-2 text-[10px] font-mono text-neutral-400">
+                            {item.defaultStatus}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Deterministic Order Flow Banner */}
+              <div className="p-4 rounded-2xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-neutral-900 dark:text-white uppercase tracking-wider">
+                    Deterministic Page Order (Current Selection):
+                  </span>
+                  <span className="text-xs text-neutral-500 font-mono">
+                    Total: {document?.pages?.length || activeProject.pageCount} pages
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                  {frontMatter.includeTitlePage && (
+                    <>
+                      <span className="px-2.5 py-1 rounded-lg bg-amber-500/20 text-amber-800 dark:text-amber-300 font-bold border border-amber-500/30">
+                        1. Title / Opening
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+                    </>
+                  )}
+                  {frontMatter.includeCopyrightPage && (
+                    <>
+                      <span className="px-2.5 py-1 rounded-lg bg-blue-500/20 text-blue-800 dark:text-blue-300 font-bold border border-blue-500/30">
+                        Copyright
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+                    </>
+                  )}
+                  {frontMatter.includeInstructionsPage && (
+                    <>
+                      <span className="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-800 dark:text-emerald-300 font-bold border border-emerald-500/30">
+                        How to Solve
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+                    </>
+                  )}
+                  {frontMatter.includeTableOfContents && (
+                    <>
+                      <span className="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-800 dark:text-purple-300 font-bold border border-purple-500/30">
+                        Table of Contents
+                      </span>
+                      <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+                    </>
+                  )}
+                  <span className="px-2.5 py-1 rounded-lg bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200">
+                    Puzzle 1
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+                  <span className="px-2.5 py-1 rounded-lg bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200">
+                    Puzzle 2...
+                  </span>
+                  <ArrowRight className="w-3.5 h-3.5 text-neutral-400" />
+                  <span className="px-2.5 py-1 rounded-lg bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200">
+                    Answer Key
+                  </span>
+                </div>
+              </div>
+
+              {/* Cover Invalidation Status if spine is outdated */}
+              {activeProject?.kdpConfig?.contentVersion?.coverOutdated && (
+                <div className="p-4 rounded-2xl bg-amber-500/15 border border-amber-500/40 flex items-start gap-3">
+                  <AlertTriangle className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <div className="font-bold text-xs uppercase tracking-wider text-amber-900 dark:text-amber-200">
+                      ⚠ Cover Outdated
+                    </div>
+                    <p className="text-xs text-amber-800 dark:text-amber-300 mt-0.5">
+                      {activeProject.kdpConfig.contentVersion.outdatedReason ||
+                        'Page count changed. Spine width must be recalculated.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* 0. KDP PUBLISHING SETUP */}
           {activeTab === 'kdp' && (
             <KdpProjectTab

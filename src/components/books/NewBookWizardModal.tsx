@@ -159,14 +159,14 @@ export const NewBookWizardModal: React.FC = () => {
   const [puzzlesPerPage, setPuzzlesPerPage] = useState<1 | 2 | 4>(1);
   const [selectedTheme, setSelectedTheme] = useState<BookTheme>(DEFAULT_BOOK_THEME);
 
-  // STEP 7: Front Matter
+  // STEP 7: Front Matter (Defaults: Title = ON, Copyright = OFF, How to Solve = OFF)
   const [frontMatter, setFrontMatter] = useState<FrontMatterConfig>({
     includeTitlePage: true,
-    includeCopyrightPage: true,
+    includeCopyrightPage: false,
+    includeInstructionsPage: false,
     includeDisclaimerPage: false,
-    includeInstructionsPage: true,
     includeIntroPage: false,
-    includeTableOfContents: true,
+    includeTableOfContents: false,
     copyrightText: '',
     instructionsText: '',
   });
@@ -1006,36 +1006,47 @@ export const NewBookWizardModal: React.FC = () => {
           {/* STEP 7: FRONT MATTER */}
           {step === 7 && (
             <div className="space-y-4">
-              <p className="text-sm text-neutral-600 dark:text-neutral-400">
-                Choose which standard introductory pages to format automatically in your manuscript.
-              </p>
+              <div>
+                <p className="text-sm text-neutral-600 dark:text-neutral-400">
+                  Choose which introductory pages to format in your manuscript.
+                </p>
+                <div className="mt-2 p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-300 flex items-center gap-2">
+                  <Info className="w-4 h-4 shrink-0 text-amber-500" />
+                  <span>Disabled pages will not be included in the generated interior.</span>
+                </div>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {[
                   {
                     key: 'includeTitlePage',
-                    label: 'Main Title Page',
+                    label: 'Title / Opening Page',
                     desc: 'Centered title, subtitle, author, and publisher imprint.',
+                    tag: 'Default: ON',
                   },
                   {
                     key: 'includeCopyrightPage',
-                    label: 'Copyright & Legal Notice',
+                    label: 'Copyright Page',
                     desc: '© notice, rights reservation, edition, and ISBN notice.',
+                    tag: 'Default: OFF',
                   },
                   {
                     key: 'includeInstructionsPage',
-                    label: 'How to Play / Rules Guide',
+                    label: 'How to Solve the Puzzles',
                     desc: 'Original solving instructions for all included puzzle types.',
+                    tag: 'Default: OFF',
                   },
                   {
                     key: 'includeTableOfContents',
                     label: 'Table of Contents',
                     desc: 'Dynamic section index with page numbers and leader lines.',
+                    tag: 'Optional',
                   },
                   {
                     key: 'includeDisclaimerPage',
                     label: 'Disclaimer Page',
                     desc: 'Publisher informational notice & rights disclaimer.',
+                    tag: 'Optional',
                   },
                 ].map(item => {
                   const isChecked = (frontMatter as any)[item.key];
@@ -1049,7 +1060,7 @@ export const NewBookWizardModal: React.FC = () => {
                       className={`p-4 rounded-2xl border text-left transition-all flex items-start gap-3 ${
                         isChecked
                           ? 'border-amber-500 bg-amber-500/10'
-                          : 'border-neutral-200 dark:border-neutral-800'
+                          : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300'
                       }`}
                     >
                       <input
@@ -1058,15 +1069,56 @@ export const NewBookWizardModal: React.FC = () => {
                         readOnly
                         className="mt-1 accent-amber-500 rounded-md"
                       />
-                      <div>
-                        <div className="font-bold text-sm text-neutral-900 dark:text-white">
-                          {item.label}
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-sm text-neutral-900 dark:text-white">
+                            {item.label}
+                          </span>
+                          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-500">
+                            {isChecked ? 'ON' : 'OFF'}
+                          </span>
                         </div>
                         <div className="text-xs text-neutral-500 mt-0.5">{item.desc}</div>
                       </div>
                     </button>
                   );
                 })}
+              </div>
+
+              {/* Deterministic Order Preview */}
+              <div className="p-3 rounded-xl bg-neutral-50 dark:bg-neutral-800/60 border border-neutral-200 dark:border-neutral-700/60 text-xs">
+                <span className="font-semibold text-neutral-700 dark:text-neutral-300 block mb-1">
+                  Deterministic Assembly Flow:
+                </span>
+                <div className="flex flex-wrap items-center gap-1.5 text-neutral-600 dark:text-neutral-400 font-mono text-[11px]">
+                  {frontMatter.includeTitlePage && (
+                    <>
+                      <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 font-bold">1. Title/Opening</span>
+                      <span>→</span>
+                    </>
+                  )}
+                  {frontMatter.includeCopyrightPage && (
+                    <>
+                      <span className="px-2 py-0.5 rounded bg-blue-500/20 text-blue-700 dark:text-blue-300 font-bold">Copyright</span>
+                      <span>→</span>
+                    </>
+                  )}
+                  {frontMatter.includeInstructionsPage && (
+                    <>
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-bold">How to Solve</span>
+                      <span>→</span>
+                    </>
+                  )}
+                  {frontMatter.includeTableOfContents && (
+                    <>
+                      <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-700 dark:text-purple-300 font-bold">TOC</span>
+                      <span>→</span>
+                    </>
+                  )}
+                  <span className="px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200">Puzzle 1, 2, 3...</span>
+                  <span>→</span>
+                  <span className="px-2 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-800 dark:text-neutral-200">Answer Key</span>
+                </div>
               </div>
             </div>
           )}

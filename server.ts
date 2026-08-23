@@ -241,7 +241,15 @@ Respond with a JSON object containing the theme/topic name, language, and an arr
         isLargePrint = false,
         titlePreference = '',
         subtitlePreference = '',
+        frontMatterPreference = {},
       } = req.body || {};
+
+      const userFrontMatter = {
+        includeTitlePage: frontMatterPreference.includeTitlePage ?? true,
+        includeCopyright: frontMatterPreference.includeCopyright ?? false,
+        includeInstructions: frontMatterPreference.includeInstructions ?? false,
+        includeTOC: frontMatterPreference.includeTOC ?? false,
+      };
 
       const ai = getGenAi();
 
@@ -262,6 +270,7 @@ Respond with a JSON object containing the theme/topic name, language, and an arr
             isLargePrint,
             titlePreference,
             subtitlePreference,
+            frontMatterPreference: userFrontMatter,
           }),
         });
       }
@@ -281,12 +290,16 @@ Design a complete, publication-ready Book Plan and Chapter Outline for a new KDP
 ${titlePreference ? `- Preferred Title Theme: ${titlePreference}` : ''}
 ${subtitlePreference ? `- Preferred Subtitle Theme: ${subtitlePreference}` : ''}
 
+CRITICAL RULES:
+- Generate only the requested puzzle-book content. Do NOT generate a copyright page, legal page, all-rights-reserved page, how-to-solve page, instructions page, or other front matter unless explicitly requested.
+- Default interior structure is: Title / Opening Page -> Puzzle 1 -> Puzzle 2 -> ... -> Answer Key.
+- No automatic instructional page. No automatic copyright page. No automatic legal page.
+
 Generate a comprehensive structure including:
 1. Compelling, high-converting Title and Subtitle for Amazon KDP.
 2. Formatted 7 KDP backend keyword ideas and a 2-paragraph sales description.
-3. Recommended interior layout with Front Matter (Title Page, Copyright, Instructions, TOC).
-4. 3 to 5 themed interior sections/chapters with specific puzzle types (word_search, sudoku, maze, crossword, word_scramble, cryptogram) and puzzle count allocation.
-5. Back Matter structure including Answer Key layout.`;
+3. 3 to 5 themed interior puzzle sections (word_search, sudoku, maze, crossword, word_scramble, cryptogram) allocating the puzzles.
+4. Back Matter structure including Answer Key layout.`;
 
       const response = await generateContentResilient(ai, {
         contents: prompt,
@@ -313,7 +326,6 @@ Generate a comprehensive structure including:
                   includeInstructions: { type: Type.BOOLEAN },
                   includeTOC: { type: Type.BOOLEAN },
                 },
-                required: ['includeTitlePage', 'includeCopyright', 'includeInstructions', 'includeTOC'],
               },
               sections: {
                 type: Type.ARRAY,
@@ -345,39 +357,21 @@ Generate a comprehensive structure including:
       });
 
       const parsed = cleanAndParseJson<any>(response.text || '{}', {});
+      const sanitizedPlan = sanitizeServerAIBookPlan(parsed, {
+        topic,
+        puzzleCount,
+        targetAudience,
+        trimSize,
+        targetPages,
+        difficulty,
+        answerKeyMode,
+        userFrontMatter,
+      });
+
       return res.json({
         success: true,
         isFallback: false,
-        plan: {
-          title: parsed.title || `${topic} Puzzle Book`,
-          subtitle: parsed.subtitle || `Over ${puzzleCount} Engaging Brain Puzzles for ${targetAudience}`,
-          description: parsed.description || `Enjoy hours of brain-training fun with this ${topic} collection.`,
-          targetAudience: parsed.targetAudience || targetAudience,
-          language: parsed.language || language,
-          recommendedTrimSize: parsed.recommendedTrimSize || trimSize,
-          recommendedPageCount: parsed.recommendedPageCount || targetPages,
-          totalPuzzles: parsed.totalPuzzles || puzzleCount,
-          difficultyProgression: parsed.difficultyProgression || difficulty,
-          keywords: parsed.keywords || ['puzzle book', 'brain games', 'amazon kdp'],
-          frontMatter: parsed.frontMatter || {
-            includeTitlePage: true,
-            includeCopyright: true,
-            includeInstructions: true,
-            includeTOC: true,
-          },
-          sections: (parsed.sections && parsed.sections.length > 0)
-            ? parsed.sections
-            : [
-                { title: 'Part 1: Word Searches', puzzleType: 'word_search', count: Math.ceil(puzzleCount / 3), difficulty: 'Easy', theme: topic },
-                { title: 'Part 2: Sudoku Mastery', puzzleType: 'sudoku', count: Math.ceil(puzzleCount / 3), difficulty: 'Medium', theme: 'numbers' },
-                { title: 'Part 3: Labyrinths & Mazes', puzzleType: 'maze', count: Math.floor(puzzleCount / 3), difficulty: 'Medium', theme: 'geometry' },
-              ],
-          backMatter: parsed.backMatter || {
-            answerKeyMode: answerKeyMode || 'end_of_book',
-            puzzlesPerSolutionPage: 4,
-            includeNotesPage: true,
-          },
-        },
+        plan: sanitizedPlan,
       });
     } catch (err: any) {
       console.warn('AI Book Planner fallback active:', err?.message || err);
@@ -512,6 +506,87 @@ Rules:
   });
 }
 
+function sanitizeServerAIBookPlan(parsed: any, options: any): any {
+  const {
+    topic,
+    puzzleCount = 60,
+    targetAudience = 'Adults & Seniors',
+    trimSize = '8.5x11',
+    targetPages = 80,
+    difficulty = 'Medium',
+    answerKeyMode = 'end_of_book',
+    userFrontMatter = {},
+  } = options;
+
+  // Strict whitelist for front matter
+  const frontMatter = {
+    includeTitlePage: Boolean(userFrontMatter.includeTitlePage ?? parsed.frontMatter?.includeTitlePage ?? true),
+    includeCopyright: Boolean(userFrontMatter.includeCopyright ?? false),
+    includeInstructions: Boolean(userFrontMatter.includeInstructions ?? false),
+    includeTOC: Boolean(userFrontMatter.includeTOC ?? false),
+  };
+
+  // Forbidden section labels/types when unauthorized
+  const forbiddenPatterns: string[] = [];
+  if (!frontMatter.includeCopyright) {
+    forbiddenPatterns.push('copyright', 'all rights reserved', 'legal notice', '©');
+  }
+  if (!frontMatter.includeInstructions) {
+    forbiddenPatterns.push('how to solve', 'instructions', 'how to play', 'how-to-solve', 'rules');
+  }
+
+  // Filter sections to ensure only valid puzzle sections are included
+  const validPuzzleTypes = ['word_search', 'sudoku', 'maze', 'crossword', 'word_scramble', 'cryptogram', 'number_sequence', 'logic_grid'];
+  const rawSections = Array.isArray(parsed.sections) ? parsed.sections : [];
+  
+  const sanitizedSections = rawSections.filter((sec: any) => {
+    if (!sec || typeof sec !== 'object') return false;
+    const titleLower = String(sec.title || '').toLowerCase();
+    const typeLower = String(sec.puzzleType || '').toLowerCase();
+    const themeLower = String(sec.theme || '').toLowerCase();
+
+    // Check against forbidden front matter patterns
+    for (const pattern of forbiddenPatterns) {
+      if (titleLower.includes(pattern) || typeLower.includes(pattern) || themeLower.includes(pattern)) {
+        return false;
+      }
+    }
+
+    // Must be a recognized puzzle type or general puzzle section
+    const isValidType = validPuzzleTypes.includes(typeLower) || typeLower.includes('puzzle') || typeLower.includes('search');
+    return isValidType;
+  });
+
+  const countPerSec = Math.max(10, Math.floor(puzzleCount / 3));
+  const fallbackSections = [
+    { title: 'Part 1: Word Searches', puzzleType: 'word_search', count: countPerSec, difficulty: 'Easy', theme: topic },
+    { title: 'Part 2: Sudoku Mastery', puzzleType: 'sudoku', count: countPerSec, difficulty: difficulty === 'Hard' ? 'Hard' : 'Medium', theme: 'numbers' },
+    { title: 'Part 3: Labyrinths & Mazes', puzzleType: 'maze', count: Math.max(10, puzzleCount - countPerSec * 2), difficulty: 'Medium', theme: 'geometry' },
+  ];
+
+  return {
+    title: parsed.title || `${topic} Puzzle Book`,
+    subtitle: parsed.subtitle || `Over ${puzzleCount} Engaging Brain Puzzles with Solutions for ${targetAudience}`,
+    description: parsed.description || `Enjoy hours of brain-training fun with this ${topic} collection.`,
+    targetAudience: parsed.targetAudience || targetAudience,
+    language: parsed.language || 'English',
+    recommendedTrimSize: parsed.recommendedTrimSize || trimSize,
+    recommendedPageCount: parsed.recommendedPageCount || targetPages,
+    totalPuzzles: parsed.totalPuzzles || puzzleCount,
+    difficultyProgression: parsed.difficultyProgression || difficulty,
+    keywords: Array.isArray(parsed.keywords) && parsed.keywords.length > 0
+      ? parsed.keywords
+      : [`${topic.toLowerCase()} puzzle book`, 'brain games', 'amazon kdp'],
+    frontMatter,
+    sections: sanitizedSections.length > 0 ? sanitizedSections : fallbackSections,
+    backMatter: parsed.backMatter || {
+      answerKeyMode: answerKeyMode || 'end_of_book',
+      puzzlesPerSolutionPage: 4,
+      includeNotesPage: true,
+    },
+  };
+}
+
 function generateFallbackBookPlan(options: any): any {
   const {
     topic = 'Brain Fitness & Nature Exploration',
@@ -524,6 +599,7 @@ function generateFallbackBookPlan(options: any): any {
     isLargePrint = false,
     titlePreference = '',
     subtitlePreference = '',
+    frontMatterPreference = {},
   } = options;
 
   const title = titlePreference || `${topic} Puzzle Book`;
@@ -550,10 +626,10 @@ function generateFallbackBookPlan(options: any): any {
       'relaxing daily brain teasers',
     ],
     frontMatter: {
-      includeTitlePage: true,
-      includeCopyright: true,
-      includeInstructions: true,
-      includeTOC: true,
+      includeTitlePage: frontMatterPreference.includeTitlePage ?? true,
+      includeCopyright: frontMatterPreference.includeCopyright ?? false,
+      includeInstructions: frontMatterPreference.includeInstructions ?? false,
+      includeTOC: frontMatterPreference.includeTOC ?? false,
     },
     sections: [
       {

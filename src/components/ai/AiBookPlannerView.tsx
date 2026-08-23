@@ -25,6 +25,7 @@ import { useApp } from '../../context/AppContext';
 import { STANDARD_TRIM_SIZES, calculateKdpSpineWidth, calculateKdpInsideMargin } from '../../constants/kdp';
 import { BUILTIN_BOOK_THEMES } from '../../constants/bookThemes';
 import { BookGenerationService } from '../../services/bookGenerationService';
+import { FrontMatterService } from '../../services/frontMatterService';
 import { AiBookPlan, AiPlanSection } from '../../types/ai';
 import { PuzzleType, PuzzleDifficulty } from '../../puzzles/types';
 import { StorageService } from '../../services/storageService';
@@ -124,12 +125,24 @@ export const AiBookPlannerView: React.FC = () => {
           isLargePrint,
           titlePreference: titlePreference.trim(),
           subtitlePreference: subtitlePreference.trim(),
+          frontMatterPreference: {
+            includeTitlePage: true,
+            includeCopyright: false,
+            includeInstructions: false,
+            includeTOC: false,
+          },
         }),
       });
 
       const data = await response.json();
       if (data.plan) {
-        setCurrentPlan(data.plan);
+        const cleanPlan = FrontMatterService.sanitizeAIBookPlan(data.plan, {
+          titlePage: data.plan.frontMatter?.includeTitlePage ?? true,
+          copyrightPage: data.plan.frontMatter?.includeCopyright ?? false,
+          howToSolvePage: data.plan.frontMatter?.includeInstructions ?? false,
+          tableOfContents: data.plan.frontMatter?.includeTOC ?? false,
+        });
+        setCurrentPlan(cleanPlan);
         showToast({
           type: 'success',
           title: 'Book Plan Ready',

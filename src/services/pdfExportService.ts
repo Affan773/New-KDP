@@ -19,6 +19,7 @@ import {
 } from '../types/project';
 import { BookValidationService, ValidationReport } from './bookValidationService';
 import { PageNumberingService } from './pageNumberingService';
+import { FrontMatterService } from './frontMatterService';
 import { EMBEDDED_FONTS } from '../assets/fonts/embeddedFonts';
 
 export interface ExportProgressEvent {
@@ -265,12 +266,15 @@ export class PdfExportService {
       throw new Error('Export cancelled by user.');
     }
 
+    // Run server/client-grade sanitization to guarantee no unauthorized front matter is rendered
+    const { sanitizedDocument } = FrontMatterService.sanitizeBookStructure(document, project);
+
     // Filter pages if custom range is requested
-    let targetPages = document.pages;
+    let targetPages = sanitizedDocument.pages;
     if (settings.pageRange === 'custom' && settings.customRangeStart && settings.customRangeEnd) {
       const start = Math.max(1, settings.customRangeStart);
-      const end = Math.min(document.pages.length, settings.customRangeEnd);
-      targetPages = document.pages.filter(p => p.pageNumber >= start && p.pageNumber <= end);
+      const end = Math.min(sanitizedDocument.pages.length, settings.customRangeEnd);
+      targetPages = sanitizedDocument.pages.filter(p => p.pageNumber >= start && p.pageNumber <= end);
     }
 
     const totalPages = targetPages.length;
