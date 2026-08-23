@@ -1,5 +1,5 @@
 import { FrontMatterConfig } from '../types/book';
-import { PageModel, Project, DocumentModel } from '../types/project';
+import { PageModel, Project, DocumentModel, TextElement } from '../types/project';
 import { BookMetadata, BookTheme } from '../types/book';
 import { PageCompositionEngine } from './pageCompositionEngine';
 import { AnswerKeyService } from './answerKeyService';
@@ -461,7 +461,7 @@ export class FrontMatterService {
         Boolean(page.puzzleType) ||
         page.elements.some(
           el =>
-            el.type === 'puzzle_grid' ||
+            el.type === 'puzzle' ||
             Boolean((el as any).puzzleType) ||
             (el.name && (el.name.toLowerCase().includes('puzzle') || el.name.toLowerCase().includes('grid') || el.name.toLowerCase().includes('word search') || el.name.toLowerCase().includes('sudoku') || el.name.toLowerCase().includes('maze')))
         );
@@ -486,7 +486,7 @@ export class FrontMatterService {
         page.elements.some(
           el =>
             (el.name && el.name.toLowerCase().includes('copyright')) ||
-            (typeof el.content === 'string' && (el.content.includes('Copyright ©') || el.content.toLowerCase().includes('all rights reserved')))
+            (el.type === 'text' && typeof (el as TextElement).content === 'string' && ((el as TextElement).content.includes('Copyright ©') || (el as TextElement).content.toLowerCase().includes('all rights reserved')))
         );
 
       const isInstructionsPage =
@@ -498,7 +498,7 @@ export class FrontMatterService {
         page.elements.some(
           el =>
             (el.name && (el.name.toLowerCase().includes('how to solve') || el.name.toLowerCase().includes('instruction'))) ||
-            (typeof el.content === 'string' && (el.content.toLowerCase().includes('how to solve the puzzles') || el.content.toLowerCase().includes('puzzle solving tips')))
+            (el.type === 'text' && typeof (el as TextElement).content === 'string' && ((el as TextElement).content.toLowerCase().includes('how to solve the puzzles') || (el as TextElement).content.toLowerCase().includes('puzzle solving tips')))
         );
 
       const isTocPage =

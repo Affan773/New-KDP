@@ -20,6 +20,7 @@ import {
 import { BookValidationService, ValidationReport } from './bookValidationService';
 import { PageNumberingService } from './pageNumberingService';
 import { FrontMatterService } from './frontMatterService';
+import { AnswerKeyService } from './answerKeyService';
 import { EMBEDDED_FONTS } from '../assets/fonts/embeddedFonts';
 
 export interface ExportProgressEvent {
@@ -230,6 +231,86 @@ export class PdfExportService {
   }
 
   /**
+   * Centralized detector: Checks whether a page has visible, printable content
+   * (Text, Puzzles, Shapes, Lines, Images, etc.) or is an intentional blank page.
+   * Returns true ONLY if the page is unexpectedly/accidentally empty.
+   */
+  public static isPageEmpty(page: PageModel): boolean {
+    if (!page) return true;
+
+    // Preserve intentional blank pages required for left/right book layout or explicitly marked blank
+    if (
+      (page as any).isIntentionalBlank === true ||
+      (page as any).intentionalBlankPage === true ||
+      (page.pageType as string) === 'intentional_blank'
+    ) {
+      return false;
+    }
+
+    const elements = page.elements || [];
+    if (elements.length === 0) {
+      return true;
+    }
+
+    // Check if any element contains visible, non-trivial content
+    let hasVisibleContent = false;
+
+    for (const el of elements) {
+      if (!el || el.opacity === 0) continue;
+      const w = el.width || 0;
+      const h = el.height || 0;
+
+      if (el.type === 'text') {
+        const text = (el as TextElement).content;
+        const isPurePageNumPlaceholder =
+          el.name === 'Page Number' || el.name === 'Page Number Placemarker';
+        if (text && text.trim().length > 0 && w > 0 && h > 0 && !isPurePageNumPlaceholder) {
+          hasVisibleContent = true;
+          break;
+        }
+      } else if (el.type === 'puzzle') {
+        const pEl = el as PuzzlePlaceholderElement;
+        if (pEl.puzzleData || pEl.previewData || pEl.puzzleType) {
+          hasVisibleContent = true;
+          break;
+        }
+      } else if (el.type === 'shape') {
+        const sEl = el as ShapeElement;
+        if (w > 0 && h > 0 && (sEl.fillColor !== 'transparent' || (sEl.strokeWidth && sEl.strokeWidth > 0))) {
+          hasVisibleContent = true;
+          break;
+        }
+      } else if (el.type === 'line') {
+        const lEl = el as LineElement;
+        if ((w > 0 || h > 0) && (lEl.strokeWidth || 1) > 0) {
+          hasVisibleContent = true;
+          break;
+        }
+      } else if (el.type === 'image') {
+        const iEl = el as ImageElement;
+        if (((iEl as any).src || (iEl as any).url) && w > 0 && h > 0) {
+          hasVisibleContent = true;
+          break;
+        }
+      }
+    }
+
+    return !hasVisibleContent;
+  }
+
+  /**
+   * Removes unintentionally empty pages from the manuscript and renumbers remaining pages sequentially.
+   */
+  public static removeUnexpectedBlankPages(pages: PageModel[]): PageModel[] {
+    if (!pages || pages.length === 0) return [];
+    const nonBlank = pages.filter(p => !this.isPageEmpty(p));
+    nonBlank.forEach((p, idx) => {
+      p.pageNumber = idx + 1;
+    });
+    return AnswerKeyService.synchronizeSolutionPageReferences(nonBlank);
+  }
+
+  /**
    * Generates a Print-Ready Interior PDF with 100% Embedded TrueType Fonts
    */
   public static async exportInteriorPdf(
@@ -269,12 +350,36 @@ export class PdfExportService {
     // Run server/client-grade sanitization to guarantee no unauthorized front matter is rendered
     const { sanitizedDocument } = FrontMatterService.sanitizeBookStructure(document, project);
 
+    // Sanitize any unintentional blank pages (safety layer)
+    const cleanedPages = this.removeUnexpectedBlankPages(sanitizedDocument.pages);
+
+    // If final interior page count changed, synchronize project and mark cover outdated
+    if (cleanedPages.length !== project.pageCount || cleanedPages.length !== document.pages.length) {
+      project.pageCount = cleanedPages.length;
+      if (project.kdpSettings) {
+        project.kdpSettings.pageCount = cleanedPages.length;
+        const newSpine = calculateKdpSpineWidth(cleanedPages.length, project.kdpSettings.paperType || 'White');
+        project.kdpSettings.spineWidthInches = newSpine;
+        const newCoverDims = calculateKdpCoverDimensions(
+          project.kdpSettings.trimSize?.width || 8.5,
+          project.kdpSettings.trimSize?.height || 11.0,
+          newSpine
+        );
+        project.kdpSettings.coverWidthInches = newCoverDims.width;
+        project.kdpSettings.coverHeightInches = newCoverDims.height;
+      }
+      if ((project as any).kdpConfig) {
+        (project as any).kdpConfig.coverStatus = 'OUTDATED';
+        (project as any).kdpConfig.coverStatusReason = 'Final interior page count changed.';
+      }
+    }
+
     // Filter pages if custom range is requested
-    let targetPages = sanitizedDocument.pages;
+    let targetPages = cleanedPages;
     if (settings.pageRange === 'custom' && settings.customRangeStart && settings.customRangeEnd) {
       const start = Math.max(1, settings.customRangeStart);
-      const end = Math.min(sanitizedDocument.pages.length, settings.customRangeEnd);
-      targetPages = sanitizedDocument.pages.filter(p => p.pageNumber >= start && p.pageNumber <= end);
+      const end = Math.min(cleanedPages.length, settings.customRangeEnd);
+      targetPages = cleanedPages.filter(p => p.pageNumber >= start && p.pageNumber <= end);
     }
 
     const totalPages = targetPages.length;
@@ -1233,6 +1338,104 @@ export class PdfExportService {
         isAnswerKeyPage,
         el
       );
+    } else if (pType === 'sudoku') {
+      ops += this.renderSudokuVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
+    } else if (pType === 'crossword') {
+      ops += this.renderCrosswordVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
+    } else if (pType === 'maze') {
+      ops += this.renderMazeVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
+    } else if (pType === 'cryptogram') {
+      ops += this.renderCryptogramVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
+    } else if (pType === 'word_scramble') {
+      ops += this.renderWordScrambleVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
+    } else if (pType === 'number_puzzle') {
+      ops += this.renderNumberPuzzleVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
+    } else if (pType === 'logic_grid') {
+      ops += this.renderLogicGridVector(
+        page,
+        puzzleData,
+        x,
+        contentY,
+        w,
+        contentH,
+        pageHeightPt,
+        colorMode,
+        fonts,
+        isAnswerKeyPage,
+        el
+      );
     } else {
       ops += this.renderGenericPuzzleGrid(page, x, contentY, w, contentH, pageHeightPt, colorMode, fonts);
     }
@@ -1437,6 +1640,790 @@ export class PdfExportService {
           });
           ops++;
         }
+      }
+    }
+
+    return ops;
+  }
+
+  /**
+   * Sudoku Vector Engine:
+   * - 4x4, 6x6, or 9x9 grid with thick subdividing box borders
+   * - Bold numerals for initial clues, clear secondary styling for solution entries
+   */
+  private static renderSudokuVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const size = data.size || 9;
+    const boxW = data.boxWidth || (size === 6 ? 3 : size === 4 ? 2 : 3);
+    const boxH = data.boxHeight || (size === 6 ? 2 : size === 4 ? 2 : 3);
+    const initialGrid: (number | null)[][] = data.initialGrid || [];
+    const solutionGrid: (number | null)[][] = data.solutionGrid || [];
+    const displayGrid = isSolution && solutionGrid.length > 0 ? solutionGrid : initialGrid;
+
+    const safePaddingX = Math.max(6, w * 0.04);
+    const safeW = Math.max(1, w - safePaddingX * 2);
+    const safeH = Math.max(1, h - 10);
+    const cellSize = Math.min(safeW / size, safeH / size);
+    const gridW = size * cellSize;
+    const gridH = size * cellSize;
+
+    const gridX = x + (w - gridW) / 2;
+    const gridTopY = y + (h - gridH) / 2;
+    const gridBottomPdfY = pageHeightPt - (gridTopY + gridH);
+
+    const borderCol = this.parseColor('#111827', colorMode);
+    const thinCol = this.parseColor('#9CA3AF', colorMode);
+    const solCol = colorMode === 'grayscale' ? this.parseColor('#4B5563', colorMode) : this.parseColor('#D97706', colorMode);
+
+    // 1. Outer border (2pt bold)
+    page.drawRectangle({
+      x: gridX,
+      y: gridBottomPdfY,
+      width: gridW,
+      height: gridH,
+      borderColor: borderCol.pdfRgb,
+      borderWidth: 2,
+    });
+    ops++;
+
+    // 2. Inner grid lines
+    for (let r = 1; r < size; r++) {
+      const isThick = r % boxH === 0;
+      const linePdfY = pageHeightPt - (gridTopY + r * cellSize);
+      page.drawLine({
+        start: { x: gridX, y: linePdfY },
+        end: { x: gridX + gridW, y: linePdfY },
+        color: isThick ? borderCol.pdfRgb : thinCol.pdfRgb,
+        thickness: isThick ? 1.8 : 0.6,
+      });
+      ops++;
+    }
+
+    for (let c = 1; c < size; c++) {
+      const isThick = c % boxW === 0;
+      const lineX = gridX + c * cellSize;
+      page.drawLine({
+        start: { x: lineX, y: gridBottomPdfY },
+        end: { x: lineX, y: gridBottomPdfY + gridH },
+        color: isThick ? borderCol.pdfRgb : thinCol.pdfRgb,
+        thickness: isThick ? 1.8 : 0.6,
+      });
+      ops++;
+    }
+
+    // 3. Numerals
+    const numFontSize = Math.min(26, cellSize * 0.58);
+    const capHeight = numFontSize * 0.70;
+
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const val = displayGrid?.[r]?.[c];
+        if (val !== null && val !== undefined && val !== 0) {
+          const isInitial = initialGrid?.[r]?.[c] !== null && initialGrid?.[r]?.[c] !== undefined && initialGrid?.[r]?.[c] !== 0;
+          const font = isInitial ? fonts.outfitBold : fonts.plusJakartaSansBold;
+          const col = isInitial ? borderCol : (isSolution ? solCol : borderCol);
+          const str = String(val);
+          const strW = font.widthOfTextAtSize(str, numFontSize);
+
+          const cellCenterPdfY = pageHeightPt - (gridTopY + r * cellSize + cellSize / 2);
+          const textPdfY = cellCenterPdfY - capHeight / 2;
+
+          page.drawText(str, {
+            x: gridX + c * cellSize + (cellSize - strW) / 2,
+            y: textPdfY,
+            size: numFontSize,
+            font,
+            color: col.pdfRgb,
+          });
+          ops++;
+        }
+      }
+    }
+
+    return ops;
+  }
+
+  /**
+   * Crossword Vector Engine:
+   * - Grid matrix with black and white cells
+   * - Superscript numbers for clue beginnings
+   * - Across and Down clue lists formatted below grid
+   */
+  private static renderCrosswordVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const size = data.size || 13;
+    const grid: (string | null)[][] = data.grid || [];
+    const numbers: (number | null)[][] = data.numbers || [];
+    const solutionGrid: (string | null)[][] = data.solutionGrid || [];
+    const acrossEntries: { number: number; clue: string; word: string }[] = data.acrossEntries || [];
+    const downEntries: { number: number; clue: string; word: string }[] = data.downEntries || [];
+
+    const showClues = !isSolution && (acrossEntries.length > 0 || downEntries.length > 0) && h >= 220;
+    const gridAvailableH = showClues ? Math.min(w * 0.70, h * 0.48) : Math.min(w, h - 10);
+    const cellSize = Math.min(w / size, gridAvailableH / size);
+    const gridW = size * cellSize;
+    const gridH = size * cellSize;
+
+    const gridX = x + (w - gridW) / 2;
+    const gridTopY = y + 4;
+    const borderCol = this.parseColor('#111827', colorMode);
+    const clueNumCol = this.parseColor('#374151', colorMode);
+
+    // 1. Draw Cells
+    for (let r = 0; r < size; r++) {
+      for (let c = 0; c < size; c++) {
+        const cellX = gridX + c * cellSize;
+        const cellPdfY = pageHeightPt - (gridTopY + (r + 1) * cellSize);
+        const isWhite = grid[r]?.[c] !== null && grid[r]?.[c] !== undefined;
+
+        if (!isWhite) {
+          // Black cell
+          page.drawRectangle({
+            x: cellX,
+            y: cellPdfY,
+            width: cellSize,
+            height: cellSize,
+            color: borderCol.pdfRgb,
+          });
+          ops++;
+        } else {
+          // White cell
+          page.drawRectangle({
+            x: cellX,
+            y: cellPdfY,
+            width: cellSize,
+            height: cellSize,
+            borderColor: borderCol.pdfRgb,
+            borderWidth: 0.5,
+          });
+          ops++;
+
+          // Small clue number in top-left
+          const cellNum = numbers[r]?.[c];
+          if (cellNum) {
+            const numStr = String(cellNum);
+            const numSize = Math.max(4.5, Math.min(8, cellSize * 0.28));
+            page.drawText(numStr, {
+              x: cellX + 1.5,
+              y: pageHeightPt - (gridTopY + r * cellSize + numSize + 1),
+              size: numSize,
+              font: fonts.plusJakartaSansBold,
+              color: clueNumCol.pdfRgb,
+            });
+            ops++;
+          }
+
+          // Solution letter if solution mode
+          if (isSolution) {
+            const solLetter = (solutionGrid[r]?.[c] || '').toUpperCase();
+            if (solLetter) {
+              const letSize = Math.min(18, cellSize * 0.55);
+              const letW = fonts.outfitBold.widthOfTextAtSize(solLetter, letSize);
+              const letPdfY = pageHeightPt - (gridTopY + r * cellSize + cellSize / 2) - (letSize * 0.7) / 2;
+              page.drawText(solLetter, {
+                x: cellX + (cellSize - letW) / 2,
+                y: letPdfY,
+                size: letSize,
+                font: fonts.outfitBold,
+                color: borderCol.pdfRgb,
+              });
+              ops++;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Draw Clues (Across / Down)
+    if (showClues) {
+      const clueTopY = gridTopY + gridH + 12;
+      const clueColW = (w - 16) / 2;
+      const leftColX = x;
+      const rightColX = x + clueColW + 16;
+      const clueFontSize = 7.5;
+      const clueHeadingFontSize = 9;
+      const rowHeight = clueFontSize * 1.35;
+
+      // Across Clues
+      page.drawText('ACROSS', {
+        x: leftColX,
+        y: pageHeightPt - clueTopY - clueHeadingFontSize,
+        size: clueHeadingFontSize,
+        font: fonts.plusJakartaSansBold,
+        color: borderCol.pdfRgb,
+      });
+      ops++;
+
+      let acrossY = clueTopY + clueHeadingFontSize + 6;
+      for (let i = 0; i < acrossEntries.length; i++) {
+        const e = acrossEntries[i];
+        const text = `${e.number}. ${e.clue}`;
+        if (acrossY + rowHeight > h) break;
+        page.drawText(text.substring(0, 42), {
+          x: leftColX,
+          y: pageHeightPt - acrossY - clueFontSize,
+          size: clueFontSize,
+          font: fonts.plusJakartaSansRegular,
+          color: clueNumCol.pdfRgb,
+        });
+        acrossY += rowHeight;
+        ops++;
+      }
+
+      // Down Clues
+      page.drawText('DOWN', {
+        x: rightColX,
+        y: pageHeightPt - clueTopY - clueHeadingFontSize,
+        size: clueHeadingFontSize,
+        font: fonts.plusJakartaSansBold,
+        color: borderCol.pdfRgb,
+      });
+      ops++;
+
+      let downY = clueTopY + clueHeadingFontSize + 6;
+      for (let i = 0; i < downEntries.length; i++) {
+        const e = downEntries[i];
+        const text = `${e.number}. ${e.clue}`;
+        if (downY + rowHeight > h) break;
+        page.drawText(text.substring(0, 42), {
+          x: rightColX,
+          y: pageHeightPt - downY - clueFontSize,
+          size: clueFontSize,
+          font: fonts.plusJakartaSansRegular,
+          color: clueNumCol.pdfRgb,
+        });
+        downY += rowHeight;
+        ops++;
+      }
+    }
+
+    return ops;
+  }
+
+  /**
+   * Maze Vector Engine:
+   * - Precision wall lines
+   * - Start / Finish markers
+   * - Solution polyline in solution mode
+   */
+  private static renderMazeVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const width = data.width || 21;
+    const height = data.height || 21;
+    const grid: { walls: { top: boolean; right: boolean; bottom: boolean; left: boolean } }[][] = data.grid || [];
+    const start = data.start || { row: 0, col: 0 };
+    const end = data.end || { row: height - 1, col: width - 1 };
+    const solutionPath: { row: number; col: number }[] = data.solutionPath || [];
+
+    const safePaddingX = Math.max(6, w * 0.04);
+    const safeW = Math.max(1, w - safePaddingX * 2);
+    const safeH = Math.max(1, h - 20);
+    const cellSize = Math.min(safeW / width, safeH / height);
+    const mazeW = width * cellSize;
+    const mazeH = height * cellSize;
+
+    const mazeX = x + (w - mazeW) / 2;
+    const mazeTopY = y + (h - mazeH) / 2;
+    const borderCol = this.parseColor('#111827', colorMode);
+    const pathCol = colorMode === 'grayscale' ? this.parseColor('#374151', colorMode) : this.parseColor('#D97706', colorMode);
+
+    // 1. Draw Maze Walls
+    for (let r = 0; r < grid.length; r++) {
+      for (let c = 0; c < (grid[r]?.length || 0); c++) {
+        const cell = grid[r][c];
+        if (!cell || !cell.walls) continue;
+
+        const x1 = mazeX + c * cellSize;
+        const y1 = pageHeightPt - (mazeTopY + r * cellSize);
+        const x2 = x1 + cellSize;
+        const y2 = y1 - cellSize;
+
+        if (cell.walls.top) {
+          page.drawLine({ start: { x: x1, y: y1 }, end: { x: x2, y: y1 }, color: borderCol.pdfRgb, thickness: 1.2 });
+          ops++;
+        }
+        if (cell.walls.bottom) {
+          page.drawLine({ start: { x: x1, y: y2 }, end: { x: x2, y: y2 }, color: borderCol.pdfRgb, thickness: 1.2 });
+          ops++;
+        }
+        if (cell.walls.left) {
+          page.drawLine({ start: { x: x1, y: y1 }, end: { x: x1, y: y2 }, color: borderCol.pdfRgb, thickness: 1.2 });
+          ops++;
+        }
+        if (cell.walls.right) {
+          page.drawLine({ start: { x: x2, y: y1 }, end: { x: x2, y: y2 }, color: borderCol.pdfRgb, thickness: 1.2 });
+          ops++;
+        }
+      }
+    }
+
+    // 2. Start & Finish Indicators
+    const startX = mazeX + start.col * cellSize + cellSize / 2;
+    const startY = pageHeightPt - (mazeTopY + start.row * cellSize + cellSize / 2);
+    const endX = mazeX + end.col * cellSize + cellSize / 2;
+    const endY = pageHeightPt - (mazeTopY + end.row * cellSize + cellSize / 2);
+
+    page.drawCircle({ x: startX, y: startY, size: Math.max(2, cellSize * 0.35), color: borderCol.pdfRgb });
+    page.drawCircle({ x: endX, y: endY, size: Math.max(2, cellSize * 0.35), color: pathCol.pdfRgb });
+    ops += 2;
+
+    // 3. Solution Path (if answer key)
+    if (isSolution && solutionPath.length > 1) {
+      for (let i = 0; i < solutionPath.length - 1; i++) {
+        const ptA = solutionPath[i];
+        const ptB = solutionPath[i + 1];
+        const ax = mazeX + ptA.col * cellSize + cellSize / 2;
+        const ay = pageHeightPt - (mazeTopY + ptA.row * cellSize + cellSize / 2);
+        const bx = mazeX + ptB.col * cellSize + cellSize / 2;
+        const by = pageHeightPt - (mazeTopY + ptB.row * cellSize + cellSize / 2);
+
+        page.drawLine({
+          start: { x: ax, y: ay },
+          end: { x: bx, y: by },
+          color: pathCol.pdfRgb,
+          thickness: Math.max(1.8, cellSize * 0.3),
+        });
+        ops++;
+      }
+    }
+
+    return ops;
+  }
+
+  /**
+   * Cryptogram Vector Engine:
+   * - Decryption blanks with cipher characters below
+   * - Hints and plain letters in solution mode
+   */
+  private static renderCryptogramVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    _h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const ciphertext = data.ciphertext || '';
+    const plaintext = data.plaintext || '';
+    const author = data.author || '';
+    const hints = data.hints || {};
+
+    const words = ciphertext.split(' ');
+    const plainWords = plaintext.split(' ');
+
+    const charW = 14;
+    const charGap = 3;
+    const wordGap = 12;
+    const rowHeight = 36;
+
+    let currentX = x + 10;
+    let currentY = y + 16;
+    const borderCol = this.parseColor('#111827', colorMode);
+    const plainCol = colorMode === 'grayscale' ? this.parseColor('#374151', colorMode) : this.parseColor('#D97706', colorMode);
+
+    for (let wIdx = 0; wIdx < words.length; wIdx++) {
+      const word = words[wIdx];
+      const wordWidth = word.length * (charW + charGap) - charGap;
+
+      if (currentX + wordWidth > x + w - 10) {
+        currentX = x + 10;
+        currentY += rowHeight;
+      }
+
+      for (let cIdx = 0; cIdx < word.length; cIdx++) {
+        const cipherChar = word[cIdx];
+        const plainChar = plainWords[wIdx]?.[cIdx] || '';
+        const isLetter = /[A-Z]/i.test(cipherChar);
+        const hintVal = hints ? hints[cipherChar] : undefined;
+        const letterPdfY = pageHeightPt - currentY;
+
+        if (isLetter) {
+          // Top plaintext or hint
+          const topChar = isSolution ? plainChar : (hintVal || '');
+          if (topChar) {
+            const topW = fonts.outfitBold.widthOfTextAtSize(topChar, 11);
+            page.drawText(topChar, {
+              x: currentX + (charW - topW) / 2,
+              y: letterPdfY + 4,
+              size: 11,
+              font: fonts.outfitBold,
+              color: plainCol.pdfRgb,
+            });
+            ops++;
+          }
+
+          // Underline
+          page.drawLine({
+            start: { x: currentX, y: letterPdfY },
+            end: { x: currentX + charW, y: letterPdfY },
+            color: borderCol.pdfRgb,
+            thickness: 1.2,
+          });
+          ops++;
+
+          // Ciphertext char below line
+          const cW = fonts.plusJakartaSansBold.widthOfTextAtSize(cipherChar, 10);
+          page.drawText(cipherChar, {
+            x: currentX + (charW - cW) / 2,
+            y: letterPdfY - 12,
+            size: 10,
+            font: fonts.plusJakartaSansBold,
+            color: borderCol.pdfRgb,
+          });
+          ops++;
+        } else {
+          // Punctuation
+          const pW = fonts.plusJakartaSansBold.widthOfTextAtSize(cipherChar, 10);
+          page.drawText(cipherChar, {
+            x: currentX + (charW - pW) / 2,
+            y: letterPdfY - 6,
+            size: 10,
+            font: fonts.plusJakartaSansBold,
+            color: borderCol.pdfRgb,
+          });
+          ops++;
+        }
+
+        currentX += charW + charGap;
+      }
+
+      currentX += wordGap;
+    }
+
+    // Author attribution
+    if (author) {
+      const authorText = `— ${isSolution ? author : '???'}`;
+      const authW = fonts.plusJakartaSansRegular.widthOfTextAtSize(authorText, 10);
+      page.drawText(authorText, {
+        x: x + w - authW - 16,
+        y: pageHeightPt - (currentY + rowHeight + 10),
+        size: 10,
+        font: fonts.plusJakartaSansRegular,
+        color: borderCol.pdfRgb,
+      });
+      ops++;
+    }
+
+    return ops;
+  }
+
+  /**
+   * Word Scramble Vector Engine:
+   * - Numbered items with scrambled letters
+   * - Clean blanks and decoded solutions
+   */
+  private static renderWordScrambleVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const items: { id: string; original: string; scrambled: string; hint?: string }[] = data.items || [];
+    if (items.length === 0) return 0;
+
+    const rowH = Math.min(32, Math.floor((h - 10) / items.length));
+    const borderCol = this.parseColor('#111827', colorMode);
+    const solCol = colorMode === 'grayscale' ? this.parseColor('#374151', colorMode) : this.parseColor('#D97706', colorMode);
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const itemY = y + i * rowH + 10;
+      const pdfY = pageHeightPt - itemY;
+
+      // Item number
+      const numStr = `${i + 1}.`;
+      page.drawText(numStr, {
+        x: x + 10,
+        y: pdfY,
+        size: 11,
+        font: fonts.plusJakartaSansBold,
+        color: borderCol.pdfRgb,
+      });
+      ops++;
+
+      // Scrambled letters (spaced for readability)
+      const scramText = item.scrambled.split('').join('  ');
+      page.drawText(scramText, {
+        x: x + 36,
+        y: pdfY,
+        size: 12,
+        font: fonts.outfitBold,
+        color: borderCol.pdfRgb,
+      });
+      ops++;
+
+      // Answer section
+      if (isSolution) {
+        const solText = `[ ${item.original} ]`;
+        page.drawText(solText, {
+          x: x + w - 160,
+          y: pdfY,
+          size: 11,
+          font: fonts.plusJakartaSansBold,
+          color: solCol.pdfRgb,
+        });
+        ops++;
+      } else {
+        const blankLine = '________________________';
+        page.drawText(blankLine, {
+          x: x + w - 160,
+          y: pdfY,
+          size: 10,
+          font: fonts.plusJakartaSansRegular,
+          color: this.parseColor('#9CA3AF', colorMode).pdfRgb,
+        });
+        ops++;
+      }
+    }
+
+    return ops;
+  }
+
+  /**
+   * Number Puzzle Vector Engine:
+   * - Number sequence & equation brain teasers
+   */
+  private static renderNumberPuzzleVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const subType = data.subType || 'sequence';
+    const sequences = data.sequences || [];
+    const missingNumbers = data.missingNumbers || [];
+    const items = subType === 'sequence' ? sequences : missingNumbers;
+    if (items.length === 0) return 0;
+
+    const rowH = Math.min(36, Math.floor((h - 10) / items.length));
+    const borderCol = this.parseColor('#111827', colorMode);
+    const solCol = colorMode === 'grayscale' ? this.parseColor('#374151', colorMode) : this.parseColor('#D97706', colorMode);
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      const itemY = y + i * rowH + 10;
+      const pdfY = pageHeightPt - itemY;
+
+      // Item number
+      const numStr = `${i + 1}.`;
+      page.drawText(numStr, {
+        x: x + 10,
+        y: pdfY,
+        size: 11,
+        font: fonts.plusJakartaSansBold,
+        color: borderCol.pdfRgb,
+      });
+      ops++;
+
+      if (subType === 'sequence') {
+        const seqStr = `${(it.sequence || []).join(', ')},  ?`;
+        page.drawText(seqStr, {
+          x: x + 36,
+          y: pdfY,
+          size: 11,
+          font: fonts.outfitBold,
+          color: borderCol.pdfRgb,
+        });
+        ops++;
+
+        if (isSolution) {
+          const ansStr = `Ans: ${it.answer} (${it.ruleDescription || ''})`;
+          page.drawText(ansStr, {
+            x: x + w - 200,
+            y: pdfY,
+            size: 10,
+            font: fonts.plusJakartaSansBold,
+            color: solCol.pdfRgb,
+          });
+          ops++;
+        } else {
+          page.drawText('Ans: [       ]', {
+            x: x + w - 100,
+            y: pdfY,
+            size: 10,
+            font: fonts.plusJakartaSansRegular,
+            color: borderCol.pdfRgb,
+          });
+          ops++;
+        }
+      } else {
+        const eqStr = it.equation || '';
+        page.drawText(eqStr, {
+          x: x + 36,
+          y: pdfY,
+          size: 11,
+          font: fonts.outfitBold,
+          color: borderCol.pdfRgb,
+        });
+        ops++;
+
+        if (isSolution) {
+          const ansStr = `Ans: ${it.answer}`;
+          page.drawText(ansStr, {
+            x: x + w - 100,
+            y: pdfY,
+            size: 10,
+            font: fonts.plusJakartaSansBold,
+            color: solCol.pdfRgb,
+          });
+          ops++;
+        } else {
+          page.drawText('Ans: [   ]', {
+            x: x + w - 80,
+            y: pdfY,
+            size: 10,
+            font: fonts.plusJakartaSansRegular,
+            color: borderCol.pdfRgb,
+          });
+          ops++;
+        }
+      }
+    }
+
+    return ops;
+  }
+
+  /**
+   * Logic Grid Vector Engine:
+   * - Deduction clues list
+   * - Truth matrix solutions
+   */
+  private static renderLogicGridVector(
+    page: PDFPage,
+    puzzleData: any,
+    x: number,
+    y: number,
+    w: number,
+    _h: number,
+    pageHeightPt: number,
+    colorMode: ExportColorMode,
+    fonts: LoadedPdfFonts,
+    isSolution: boolean,
+    _el?: PuzzlePlaceholderElement
+  ): number {
+    let ops = 0;
+    const data = puzzleData?.data || puzzleData || {};
+    const clues: { id: string; text: string }[] = data.clues || [];
+    const solutionMatrix: Record<string, Record<string, string>> = data.solutionMatrix || {};
+
+    const borderCol = this.parseColor('#111827', colorMode);
+    const textCol = this.parseColor('#374151', colorMode);
+    const solCol = colorMode === 'grayscale' ? this.parseColor('#374151', colorMode) : this.parseColor('#D97706', colorMode);
+
+    let currentY = y + 12;
+
+    // Deduction Clues
+    page.drawText('DEDUCTION CLUES:', {
+      x: x + 10,
+      y: pageHeightPt - currentY,
+      size: 11,
+      font: fonts.plusJakartaSansBold,
+      color: borderCol.pdfRgb,
+    });
+    currentY += 18;
+    ops++;
+
+    for (let i = 0; i < clues.length; i++) {
+      const clueText = `${i + 1}.  ${clues[i].text}`;
+      page.drawText(clueText, {
+        x: x + 16,
+        y: pageHeightPt - currentY,
+        size: 9.5,
+        font: fonts.plusJakartaSansRegular,
+        color: textCol.pdfRgb,
+      });
+      currentY += 16;
+      ops++;
+    }
+
+    // Solution pairings if solution mode
+    if (isSolution && Object.keys(solutionMatrix).length > 0) {
+      currentY += 12;
+      page.drawText('SOLUTION MATCHES:', {
+        x: x + 10,
+        y: pageHeightPt - currentY,
+        size: 11,
+        font: fonts.plusJakartaSansBold,
+        color: solCol.pdfRgb,
+      });
+      currentY += 18;
+      ops++;
+
+      for (const [anchor, matches] of Object.entries(solutionMatrix)) {
+        const matchText = `•  ${anchor}: ${Object.values(matches).join(', ')}`;
+        page.drawText(matchText, {
+          x: x + 16,
+          y: pageHeightPt - currentY,
+          size: 9.5,
+          font: fonts.plusJakartaSansBold,
+          color: borderCol.pdfRgb,
+        });
+        currentY += 16;
+        ops++;
       }
     }
 
