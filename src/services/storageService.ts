@@ -10,10 +10,12 @@ import {
   StorageMetrics,
   UserSettings,
 } from '../types';
+import { IndexedDbService } from './indexedDbService';
 
 const STORAGE_KEYS = {
   PROJECTS: 'kdp_studio_projects_v1',
   DOCUMENTS: 'kdp_studio_documents_v1',
+  DOC_PREFIX: 'kdp_doc_',
   ASSETS: 'kdp_studio_assets_v1',
   SETTINGS: 'kdp_studio_settings_v1',
   ACTIVE_PROJECT_ID: 'kdp_studio_active_project_v1',
@@ -33,23 +35,43 @@ function safeJsonParse<T>(jsonString: string | null, fallback: T): T {
     });
     return parsed ?? fallback;
   } catch (e) {
-    console.warn('Storage JSON parse error, using fallback:', e);
     return fallback;
   }
 }
 
 /**
- * Safe localStorage writer with Quota Exceeded error handling
+ * Safe localStorage writer with automatic quota defense and cache pruning
  */
 function safeSetItem(key: string, value: string): boolean {
   try {
+    if (typeof localStorage === 'undefined') return false;
     localStorage.setItem(key, value);
     return true;
   } catch (e: any) {
-    if (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014) {
-      console.error('LocalStorage quota exceeded. Please export backup and clear unused projects.');
-    } else {
-      console.error('Failed to write to localStorage:', e);
+    // Quota Exceeded handling: prune non-critical document cache from localStorage
+    if (e?.name === 'QuotaExceededError' || e?.code === 22 || e?.code === 1014) {
+      try {
+        // Free up space by removing legacy monolithic documents blob or doc keys
+        if (key !== STORAGE_KEYS.DOCUMENTS) {
+          localStorage.removeItem(STORAGE_KEYS.DOCUMENTS);
+        }
+        // Remove individual doc keys that aren't the current key
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith(STORAGE_KEYS.DOC_PREFIX) && k !== key) {
+            keysToRemove.push(k);
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
+
+        // Retry setting the current item
+        localStorage.setItem(key, value);
+        return true;
+      } catch {
+        // IndexedDB and memory cache will serve as authoritative storage
+        return false;
+      }
     }
     return false;
   }
@@ -82,7 +104,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   },
   storage: {
     usedBytes: 0,
-    maxBytes: 15 * 1024 * 1024, // 15MB Local storage estimation
+    maxBytes: 100 * 1024 * 1024, // 100MB IndexedDB capacity
     projectsCount: 0,
     assetsCount: 0,
     pagesCount: 0,
@@ -119,25 +141,94 @@ const DEFAULT_SETTINGS: UserSettings = {
 };
 
 export class StorageService {
+  // In-memory hot cache for instant zero-latency synchronous access
+  private static documentCache = new Map<string, DocumentModel>();
+  private static projectsCache: Project[] | null = null;
+  private static assetsCache: Asset[] | null = null;
+  private static settingsCache: UserSettings | null = null;
+  private static initialized = false;
+
   /**
-   * Initializes local storage with demo data if first time running
+   * Initializes local storage and IndexedDB with demo data if first time running
    */
   public static initialize(): void {
+    if (this.initialized) return;
+    this.initialized = true;
+
     try {
-      if (!localStorage.getItem(STORAGE_KEYS.PROJECTS)) {
+      if (typeof window === 'undefined') return;
+
+      const rawProjects = localStorage.getItem(STORAGE_KEYS.PROJECTS);
+      const rawLegacyDocs = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
+
+      if (!rawProjects) {
+        // First run: Seed demo projects & documents
         const initialProjects = INITIAL_DEMO_PROJECTS.map(item => item.project);
-        const initialDocuments: Record<string, DocumentModel> = {};
+        this.projectsCache = initialProjects.map(p => this.migrateProject(p));
+
         INITIAL_DEMO_PROJECTS.forEach(item => {
-          initialDocuments[item.document.id] = item.document;
+          this.documentCache.set(item.document.id, item.document);
+          // Persist to IndexedDB asynchronously
+          IndexedDbService.put('documents', item.document).catch(() => {});
+          IndexedDbService.put('projects', item.project).catch(() => {});
         });
 
-        localStorage.setItem(STORAGE_KEYS.PROJECTS, JSON.stringify(initialProjects));
-        localStorage.setItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(initialDocuments));
-        localStorage.setItem(STORAGE_KEYS.ASSETS, JSON.stringify(DEFAULT_ASSETS));
-        localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
+        this.assetsCache = [...DEFAULT_ASSETS];
+        this.settingsCache = { ...DEFAULT_SETTINGS };
+
+        // Save lightweight projects list to localStorage
+        safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify(initialProjects));
+        safeSetItem(STORAGE_KEYS.ASSETS, JSON.stringify(DEFAULT_ASSETS));
+        safeSetItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
+      } else {
+        // Existing projects: Load into cache
+        const projects: Project[] = safeJsonParse(rawProjects, []);
+        this.projectsCache = projects.map(p => this.migrateProject(p));
+
+        // Migrate legacy monolithic documents blob to memory + IndexedDB + per-doc keys
+        if (rawLegacyDocs) {
+          const legacyDocs = safeJsonParse<Record<string, DocumentModel>>(rawLegacyDocs, {});
+          Object.values(legacyDocs).forEach(doc => {
+            if (doc && doc.id) {
+              this.documentCache.set(doc.id, doc);
+              IndexedDbService.put('documents', doc).catch(() => {});
+            }
+          });
+          // Remove monolithic key to free localStorage quota
+          localStorage.removeItem(STORAGE_KEYS.DOCUMENTS);
+        }
+
+        // Seed Global Wonders if missing
+        const wondersDemo = INITIAL_DEMO_PROJECTS.find(p => p.project.id === 'proj-wonders-ws');
+        if (wondersDemo && !this.projectsCache.some(p => p.id === 'proj-wonders-ws')) {
+          this.projectsCache.unshift(this.migrateProject(wondersDemo.project));
+          this.documentCache.set(wondersDemo.document.id, wondersDemo.document);
+          safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify(this.projectsCache));
+          IndexedDbService.put('documents', wondersDemo.document).catch(() => {});
+          IndexedDbService.put('projects', wondersDemo.project).catch(() => {});
+        }
       }
+
+      // Background hydration from IndexedDB for any documents not yet in memory
+      this.hydrateFromIndexedDb();
     } catch (e) {
-      console.warn('LocalStorage initialization warning:', e);
+      console.warn('StorageService initialize warning:', e);
+    }
+  }
+
+  /**
+   * Background hydration from IndexedDB
+   */
+  private static async hydrateFromIndexedDb(): Promise<void> {
+    try {
+      const docs = await IndexedDbService.getAll<DocumentModel>('documents');
+      docs.forEach(doc => {
+        if (doc && doc.id && !this.documentCache.has(doc.id)) {
+          this.documentCache.set(doc.id, doc);
+        }
+      });
+    } catch {
+      // Ignored
     }
   }
 
@@ -145,13 +236,15 @@ export class StorageService {
   public static getProjects(): Project[] {
     try {
       this.initialize();
+      if (this.projectsCache) {
+        return this.projectsCache;
+      }
       const raw = localStorage.getItem(STORAGE_KEYS.PROJECTS);
       const projects: Project[] = safeJsonParse(raw, []);
       if (!Array.isArray(projects)) return [];
-      // Migrate projects to schemaVersion 4 if needed
-      return projects.map(p => this.migrateProject(p));
+      this.projectsCache = projects.map(p => this.migrateProject(p));
+      return this.projectsCache;
     } catch (e) {
-      console.error('Failed to load projects:', e);
       return [];
     }
   }
@@ -349,14 +442,19 @@ export class StorageService {
       projects.unshift(updated);
     }
 
+    this.projectsCache = [...projects];
     safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify(projects));
+    IndexedDbService.put('projects', updated).catch(() => {});
   }
 
   public static deleteProject(id: string): void {
     const projects = this.getProjects();
     const target = projects.find(p => p.id === id);
     const filtered = projects.filter(p => p.id !== id);
+
+    this.projectsCache = filtered;
     safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify(filtered));
+    IndexedDbService.delete('projects', id).catch(() => {});
 
     if (target?.documentId) {
       this.deleteDocument(target.documentId);
@@ -408,63 +506,82 @@ export class StorageService {
   // --- DOCUMENTS ---
   public static getDocument(docId: string): DocumentModel | null {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
-      const docs: Record<string, DocumentModel> = safeJsonParse(raw, {});
-      const doc = docs[docId] || null;
-      if (!doc) return null;
+      this.initialize();
 
-      // Ensure pages have pageType default if missing
-      const migratedPages = (doc.pages || []).map((p, idx) => ({
-        ...p,
-        pageNumber: p.pageNumber || idx + 1,
-        pageType: p.pageType || (idx === 0 ? 'title' : 'content'),
-        elements: Array.isArray(p.elements) ? p.elements : [],
-      }));
+      // 1. In-memory hot cache
+      if (this.documentCache.has(docId)) {
+        return this.documentCache.get(docId) || null;
+      }
 
-      return {
-        ...doc,
-        schemaVersion: 4,
-        pages: migratedPages,
-      };
+      // 2. Per-document localStorage key
+      const perDocRaw = localStorage.getItem(`${STORAGE_KEYS.DOC_PREFIX}${docId}`);
+      if (perDocRaw) {
+        const parsed = safeJsonParse<DocumentModel | null>(perDocRaw, null);
+        if (parsed) {
+          this.documentCache.set(docId, parsed);
+          return parsed;
+        }
+      }
+
+      // 3. Fallback to demo projects definition
+      const demo = INITIAL_DEMO_PROJECTS.find(d => d.document.id === docId);
+      if (demo) {
+        this.documentCache.set(docId, demo.document);
+        return demo.document;
+      }
+
+      return null;
     } catch (e) {
-      console.error('Failed to get document:', e);
       return null;
     }
   }
 
   public static saveDocument(doc: DocumentModel): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
-      const docs: Record<string, DocumentModel> = safeJsonParse(raw, {});
-      docs[doc.id] = {
+      this.initialize();
+
+      const updatedDoc: DocumentModel = {
         ...doc,
         updatedAt: new Date().toISOString(),
+        schemaVersion: 4,
+        pages: (doc.pages || []).map((p, idx) => ({
+          ...p,
+          pageNumber: p.pageNumber || idx + 1,
+          pageType: p.pageType || (idx === 0 ? 'title' : 'content'),
+          elements: Array.isArray(p.elements) ? p.elements : [],
+        })),
       };
-      safeSetItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
 
-      // Also update project's updatedAt and pageCount
+      // 1. Update in-memory cache immediately
+      this.documentCache.set(doc.id, updatedDoc);
+
+      // 2. Persist to durable IndexedDB asynchronously
+      IndexedDbService.put('documents', updatedDoc).catch(() => {});
+
+      // 3. Persist to per-document localStorage key (with automatic quota defense)
+      safeSetItem(`${STORAGE_KEYS.DOC_PREFIX}${doc.id}`, JSON.stringify(updatedDoc));
+
+      // 4. Update project pageCount and timestamp
       const project = this.getProjectById(doc.projectId);
       if (project) {
         this.saveProject({
           ...project,
-          pageCount: doc.pages.length,
+          pageCount: updatedDoc.pages.length,
           updatedAt: new Date().toISOString(),
         });
       }
     } catch (e) {
-      console.error('Failed to save document:', e);
+      // Memory cache continues to work seamlessly
     }
   }
 
   public static deleteDocument(docId: string): void {
     try {
-      const raw = localStorage.getItem(STORAGE_KEYS.DOCUMENTS);
-      if (!raw) return;
-      const docs: Record<string, DocumentModel> = safeJsonParse(raw, {});
-      delete docs[docId];
-      safeSetItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(docs));
+      this.documentCache.delete(docId);
+      localStorage.removeItem(`${STORAGE_KEYS.DOC_PREFIX}${docId}`);
+      IndexedDbService.delete('documents', docId).catch(() => {});
     } catch (e) {
-      console.error('Failed to delete document:', e);
+      // Ignored
     }
   }
 
@@ -472,10 +589,12 @@ export class StorageService {
   public static getAssets(): Asset[] {
     try {
       this.initialize();
+      if (this.assetsCache) return this.assetsCache;
       const raw = localStorage.getItem(STORAGE_KEYS.ASSETS);
-      return safeJsonParse(raw, DEFAULT_ASSETS);
+      const parsed = safeJsonParse(raw, DEFAULT_ASSETS);
+      this.assetsCache = parsed;
+      return parsed;
     } catch (e) {
-      console.error('Failed to get assets:', e);
       return DEFAULT_ASSETS;
     }
   }
@@ -483,30 +602,38 @@ export class StorageService {
   public static saveAsset(asset: Asset): void {
     const assets = this.getAssets();
     assets.unshift(asset);
+    this.assetsCache = [...assets];
     safeSetItem(STORAGE_KEYS.ASSETS, JSON.stringify(assets));
+    IndexedDbService.put('assets', asset).catch(() => {});
   }
 
   public static deleteAsset(id: string): void {
     const assets = this.getAssets();
     const filtered = assets.filter(a => a.id !== id);
+    this.assetsCache = filtered;
     safeSetItem(STORAGE_KEYS.ASSETS, JSON.stringify(filtered));
+    IndexedDbService.delete('assets', id).catch(() => {});
   }
 
   // --- SETTINGS ---
   public static getSettings(): UserSettings {
     try {
+      if (this.settingsCache) return this.settingsCache;
       const raw = localStorage.getItem(STORAGE_KEYS.SETTINGS);
       if (!raw) return DEFAULT_SETTINGS;
       const parsed = safeJsonParse(raw, DEFAULT_SETTINGS);
-      return { ...DEFAULT_SETTINGS, ...parsed };
+      const merged = { ...DEFAULT_SETTINGS, ...parsed };
+      this.settingsCache = merged;
+      return merged;
     } catch (e) {
-      console.error('Failed to get settings:', e);
       return DEFAULT_SETTINGS;
     }
   }
 
   public static saveSettings(settings: UserSettings): void {
+    this.settingsCache = settings;
     safeSetItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+    IndexedDbService.put('settings', { id: 'user_settings', ...settings }).catch(() => {});
   }
 
   // --- STORAGE METRICS ---
@@ -518,17 +645,26 @@ export class StorageService {
 
     let approxBytes = 0;
     try {
-      for (const key of Object.values(STORAGE_KEYS)) {
-        const item = localStorage.getItem(key);
-        if (item) approxBytes += item.length * 2; // UTF-16 approx bytes
+      // Tally document cache size
+      this.documentCache.forEach(doc => {
+        approxBytes += JSON.stringify(doc).length * 2;
+      });
+      if (approxBytes === 0) {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key) {
+            const item = localStorage.getItem(key);
+            if (item) approxBytes += item.length * 2;
+          }
+        }
       }
     } catch {
-      approxBytes = 120000;
+      approxBytes = 180000;
     }
 
     return {
-      usedBytes: approxBytes,
-      maxBytes: 15 * 1024 * 1024,
+      usedBytes: Math.max(120000, approxBytes),
+      maxBytes: 100 * 1024 * 1024, // 100MB IndexedDB capacity
       projectsCount: projects.length,
       assetsCount: assets.length,
       pagesCount: totalPages,
@@ -538,11 +674,16 @@ export class StorageService {
 
   // --- BACKUP & RESTORE ---
   public static exportAllData(): string {
+    const docsObj: Record<string, DocumentModel> = {};
+    this.documentCache.forEach((doc, id) => {
+      docsObj[id] = doc;
+    });
+
     const exportData = {
-      version: '1.0.0',
+      version: '2.0.0',
       exportedAt: new Date().toISOString(),
       projects: this.getProjects(),
-      documents: safeJsonParse(localStorage.getItem(STORAGE_KEYS.DOCUMENTS), {}),
+      documents: docsObj,
       assets: this.getAssets(),
       settings: this.getSettings(),
     };
@@ -554,8 +695,8 @@ export class StorageService {
       if (!jsonString || typeof jsonString !== 'string' || jsonString.trim().length === 0) {
         return { success: false, message: 'Uploaded file is empty.' };
       }
-      if (jsonString.length > 50 * 1024 * 1024) {
-        return { success: false, message: 'File is too large (> 50MB).' };
+      if (jsonString.length > 100 * 1024 * 1024) {
+        return { success: false, message: 'File is too large (> 100MB).' };
       }
 
       const data = safeJsonParse<any>(jsonString, null);
@@ -568,16 +709,27 @@ export class StorageService {
 
       const validProjects = data.projects.map((p: any) => this.migrateProject(p));
 
+      this.projectsCache = validProjects;
       safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify(validProjects));
+      validProjects.forEach(p => IndexedDbService.put('projects', p).catch(() => {}));
 
       if (data.documents && typeof data.documents === 'object') {
-        safeSetItem(STORAGE_KEYS.DOCUMENTS, JSON.stringify(data.documents));
+        Object.values(data.documents).forEach((doc: any) => {
+          if (doc && doc.id) {
+            this.documentCache.set(doc.id, doc);
+            safeSetItem(`${STORAGE_KEYS.DOC_PREFIX}${doc.id}`, JSON.stringify(doc));
+            IndexedDbService.put('documents', doc).catch(() => {});
+          }
+        });
       }
       if (Array.isArray(data.assets)) {
+        this.assetsCache = data.assets;
         safeSetItem(STORAGE_KEYS.ASSETS, JSON.stringify(data.assets));
+        data.assets.forEach(a => IndexedDbService.put('assets', a).catch(() => {}));
       }
       if (data.settings && typeof data.settings === 'object') {
-        safeSetItem(STORAGE_KEYS.SETTINGS, JSON.stringify({ ...DEFAULT_SETTINGS, ...data.settings }));
+        this.settingsCache = { ...DEFAULT_SETTINGS, ...data.settings };
+        safeSetItem(STORAGE_KEYS.SETTINGS, JSON.stringify(this.settingsCache));
       }
 
       return {
@@ -591,17 +743,51 @@ export class StorageService {
   }
 
   public static resetToDemoData(): void {
-    localStorage.removeItem(STORAGE_KEYS.PROJECTS);
-    localStorage.removeItem(STORAGE_KEYS.DOCUMENTS);
-    localStorage.removeItem(STORAGE_KEYS.ASSETS);
-    localStorage.removeItem(STORAGE_KEYS.SETTINGS);
+    this.documentCache.clear();
+    this.projectsCache = null;
+    this.assetsCache = null;
+    this.settingsCache = null;
+    this.initialized = false;
+
+    // Clear all localStorage keys
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('kdp_') || k.startsWith('kdp_studio_'))) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    // Clear IndexedDB stores
+    IndexedDbService.clear('projects').catch(() => {});
+    IndexedDbService.clear('documents').catch(() => {});
+    IndexedDbService.clear('assets').catch(() => {});
+    IndexedDbService.clear('settings').catch(() => {});
+
     this.initialize();
   }
 
   public static clearAllData(): void {
-    localStorage.removeItem(STORAGE_KEYS.PROJECTS);
-    localStorage.removeItem(STORAGE_KEYS.DOCUMENTS);
-    localStorage.removeItem(STORAGE_KEYS.ASSETS);
-    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
+    this.documentCache.clear();
+    this.projectsCache = [];
+    this.assetsCache = [];
+    this.settingsCache = { ...DEFAULT_SETTINGS };
+
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('kdp_') || k.startsWith('kdp_studio_'))) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+
+    IndexedDbService.clear('projects').catch(() => {});
+    IndexedDbService.clear('documents').catch(() => {});
+    IndexedDbService.clear('assets').catch(() => {});
+
+    safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify([]));
+    safeSetItem(STORAGE_KEYS.SETTINGS, JSON.stringify(DEFAULT_SETTINGS));
   }
 }

@@ -17,6 +17,8 @@ export type AppRoute =
   | 'ai'
   | 'pdf-tools'
   | 'kdp-checker'
+  | 'kdp-content'
+  | 'kdp-details'
   | 'admin';
 
 export interface ToastMessage {

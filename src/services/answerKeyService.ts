@@ -1,8 +1,30 @@
 import { DEFAULT_PUZZLE_STYLE } from '../puzzles/renderers/PuzzleRenderer';
 import { GeneratedPuzzle, PuzzleStyleOptions } from '../puzzles/types';
-import { BookTheme } from '../types/book';
+import { AnswerKeyMode, AnswerKeySettings, BookTheme } from '../types/book';
 import { CanvasElement, DocumentModel, PageModel, Project, TrimSize } from '../types/project';
 import { PageCompositionEngine } from './pageCompositionEngine';
+import { BUILTIN_BOOK_THEMES } from '../constants/bookThemes';
+
+/**
+ * Normalizes an answer key mode string into an authoritative AnswerKeyMode.
+ * Handles backward compatibility for legacy mode names like 'after_each_puzzle'.
+ * Defaults to 'end_of_book' if undefined or invalid.
+ */
+export function normalizeAnswerKeyMode(mode?: string | null): AnswerKeyMode {
+  if (!mode) return 'end_of_book';
+  if (mode === 'after_each_puzzle') return 'after_puzzle';
+  if (
+    mode === 'none' ||
+    mode === 'after_puzzle' ||
+    mode === 'after_section' ||
+    mode === 'end_of_book' ||
+    mode === 'four_up' ||
+    mode === 'custom'
+  ) {
+    return mode;
+  }
+  return 'end_of_book';
+}
 
 export interface CreateSolutionPageOptions {
   projectId: string;
@@ -16,31 +38,52 @@ export interface CreateSolutionPageOptions {
   trimSize?: TrimSize;
 }
 
+export interface GenerateSolutionPagesOptions {
+  projectId: string;
+  puzzles: GeneratedPuzzle[];
+  puzzlePageMap: Map<string, number>;
+  puzzlePageIdMap: Map<string, string>;
+  puzzleElementIdMap: Map<string, string>;
+  answerKey: AnswerKeySettings;
+  theme?: BookTheme;
+  bounds?: ReturnType<typeof PageCompositionEngine.getPageBounds>;
+  trimSize?: TrimSize;
+  styleOptions?: Partial<PuzzleStyleOptions>;
+}
+
 export interface InsertPuzzlesOptions {
   document: DocumentModel;
   project: Project;
   puzzles: GeneratedPuzzle[];
   styleOptions?: Partial<PuzzleStyleOptions>;
-  answerKeyMode?: 'end_of_book' | 'after_puzzle' | 'after_each_puzzle' | 'none';
+  answerKeyMode?: AnswerKeyMode | string;
   autoAnswerKey?: boolean;
   theme?: BookTheme;
 }
 
 export class AnswerKeyService {
   /**
-   * Checks if a page is a dedicated solution / answer key page
+   * Authoritatively checks if a page is a dedicated solution / answer key page
    */
   static isSolutionPage(page: PageModel): boolean {
-    return (
-      page.pageType === 'answer_key' ||
-      page.isAnswerKey === true ||
-      (page.name || '').toLowerCase().startsWith('solution') ||
-      (page.name || '').toLowerCase().startsWith('answer key')
+    return page.pageType === 'answer_key' || page.isAnswerKey === true;
+  }
+
+  /**
+   * Checks if a solution page already exists for a given puzzle ID
+   */
+  static hasSolutionForPuzzle(pages: PageModel[], puzzleId: string): boolean {
+    return pages.some(
+      page =>
+        this.isSolutionPage(page) &&
+        (page.sourcePuzzleId === puzzleId || page.puzzleId === puzzleId)
     );
   }
 
   /**
-   * Creates an editable, dedicated 1-up Answer Key Page for a given puzzle
+   * Creates an editable, dedicated 1-up Answer Key Page for a given puzzle.
+   * Guarantees that the solution uses the EXACT same puzzle data (grid, words, placements)
+   * with showSolution: true and showWordBank: false.
    */
   static createDedicatedSolutionPage(options: CreateSolutionPageOptions): PageModel {
     const {
@@ -136,10 +179,99 @@ export class AnswerKeyService {
   }
 
   /**
-   * Synchronizes all solution page titles and headings with their source puzzle pages' current positions
+   * The ONE AUTHORITATIVE function allowed to create Answer Key pages during book generation.
+   * 1. Receives the exact generated puzzles.
+   * 2. Never regenerates puzzles or creates random puzzle data.
+   * 3. Uses original puzzle placements, grid, and words.
+   * 4. Returns structured solution pages with proper linkage.
+   */
+  static generateSolutionPages(options: GenerateSolutionPagesOptions): PageModel[] {
+    const {
+      projectId,
+      puzzles,
+      puzzlePageMap,
+      puzzlePageIdMap,
+      puzzleElementIdMap,
+      answerKey,
+      theme,
+      bounds,
+      trimSize,
+      styleOptions = {},
+    } = options;
+
+    const normalizedMode = normalizeAnswerKeyMode(answerKey?.mode);
+    const isAutoAnswerKeyEnabled = answerKey?.enabled !== false && normalizedMode !== 'none';
+
+    if (!isAutoAnswerKeyEnabled || !puzzles || puzzles.length === 0) {
+      return [];
+    }
+
+    const solutionPages: PageModel[] = [];
+    const isWordSearchBook = puzzles.some(p => p.type === 'word_search');
+
+    // For Word Search OR 1-per-page modes: exactly 1 full page per puzzle for maximum clarity and KDP readability
+    if (
+      isWordSearchBook ||
+      normalizedMode === 'end_of_book' ||
+      normalizedMode === 'after_puzzle' ||
+      normalizedMode === 'after_section' ||
+      (answerKey.puzzlesPerPage && answerKey.puzzlesPerPage === 1)
+    ) {
+      puzzles.forEach((puzzle, idx) => {
+        const origPageNum = puzzlePageMap.get(puzzle.id) || idx + 1;
+        const origPageId = puzzlePageIdMap.get(puzzle.id) || `page-${projectId}-${origPageNum}`;
+        const origElId = puzzleElementIdMap.get(puzzle.id) || `el-puz-${origPageNum}`;
+
+        const solPage = this.createDedicatedSolutionPage({
+          projectId,
+          puzzle,
+          originalPageNumber: origPageNum,
+          sourcePuzzlePageId: origPageId,
+          sourcePuzzleElementId: origElId,
+          styleOptions,
+          theme,
+          bounds,
+          trimSize,
+        });
+
+        solutionPages.push(solPage);
+      });
+    } else if (normalizedMode === 'four_up') {
+      // Multi-up (4-up) only for non-word-search puzzles
+      for (let i = 0; i < puzzles.length; i += 4) {
+        const chunk = puzzles.slice(i, i + 4);
+        const solPage = PageCompositionEngine.composeAnswerKeyPage(
+          projectId,
+          i + 1,
+          chunk,
+          theme || BUILTIN_BOOK_THEMES[0],
+          bounds || PageCompositionEngine.getPageBounds(trimSize || { id: '8.5x11', name: '8.5x11', width: 8.5, height: 11, category: 'Large' }, 'No Bleed')
+        );
+        solutionPages.push(solPage);
+      }
+    } else if (normalizedMode === 'custom') {
+      // Multi-up custom
+      const solPerPage = Math.max(1, answerKey.puzzlesPerPage || 4);
+      for (let i = 0; i < puzzles.length; i += solPerPage) {
+        const chunk = puzzles.slice(i, i + solPerPage);
+        const solPage = PageCompositionEngine.composeAnswerKeyPage(
+          projectId,
+          i + 1,
+          chunk,
+          theme || BUILTIN_BOOK_THEMES[0],
+          bounds || PageCompositionEngine.getPageBounds(trimSize || { id: '8.5x11', name: '8.5x11', width: 8.5, height: 11, category: 'Large' }, 'No Bleed')
+        );
+        solutionPages.push(solPage);
+      }
+    }
+
+    return solutionPages;
+  }
+
+  /**
+   * Synchronizes all solution page titles, headings, and names with their source puzzle pages' current positions.
    */
   static synchronizeSolutionPageReferences(pages: PageModel[]): PageModel[] {
-    // Map page IDs to their current 1-based page numbers
     const pageIdToNumberMap = new Map<string, number>();
     const puzzleIdToNumberMap = new Map<string, number>();
 
@@ -186,7 +318,6 @@ export class AnswerKeyService {
       }
 
       if (!sourcePageNumber) {
-        // Fallback: search through elements
         for (const el of page.elements || []) {
           if ((el as any).sourcePuzzlePageId && pageIdToNumberMap.has((el as any).sourcePuzzlePageId)) {
             sourcePageNumber = pageIdToNumberMap.get((el as any).sourcePuzzlePageId);
@@ -203,7 +334,7 @@ export class AnswerKeyService {
       const refTitle = `Solution — Page ${refNumber}`;
 
       const updatedElements = (page.elements || []).map(el => {
-        if (el.type === 'text' && (el.name === 'Solutions Header' || el.content?.startsWith('Solution'))) {
+        if (el.type === 'text' && (el.name === 'Solutions Header' || el.content?.startsWith('Solution') || el.content?.startsWith('SOLUT'))) {
           return {
             ...el,
             content: refTitle,
@@ -213,6 +344,11 @@ export class AnswerKeyService {
           return {
             ...el,
             title: refTitle,
+            previewData: {
+              ...(el.previewData || {}),
+              showSolution: true,
+              showWordBank: false,
+            },
           };
         }
         return el;
@@ -230,6 +366,7 @@ export class AnswerKeyService {
   /**
    * Inserts multiple generated puzzles and their dedicated solution pages atomically.
    * Ensures deterministic 1:1 puzzle-to-solution page creation from the exact same puzzle data.
+   * Avoids creating duplicate solution pages if a solution for the puzzle already exists.
    */
   static insertPuzzlesWithSolutions(options: InsertPuzzlesOptions): {
     updatedDocument: DocumentModel;
@@ -242,8 +379,8 @@ export class AnswerKeyService {
       project,
       puzzles,
       styleOptions = {},
-      answerKeyMode = project.bookSettings?.answerKey?.mode || 'end_of_book',
-      autoAnswerKey = true,
+      answerKeyMode: rawMode = project.bookSettings?.answerKey?.mode,
+      autoAnswerKey = project.bookSettings?.answerKey?.enabled !== false,
       theme = project.bookSettings?.theme,
     } = options;
 
@@ -256,6 +393,7 @@ export class AnswerKeyService {
       };
     }
 
+    const answerKeyMode = normalizeAnswerKeyMode(rawMode);
     const trimSize: TrimSize = project.kdpSettings?.trimSize || {
       id: '8.5x11',
       name: '8.5 × 11 in (Large Format)',
@@ -274,7 +412,6 @@ export class AnswerKeyService {
     const newPuzzlePages: PageModel[] = [];
     const newSolutionPages: PageModel[] = [];
 
-    // Create puzzle and solution pages for each puzzle
     puzzles.forEach((puzzle, idx) => {
       const uniqueSuffix = `${Date.now()}-${idx}-${Math.random().toString(36).substring(2, 7)}`;
       const puzzlePageId = `page-${project.id}-puz-${uniqueSuffix}`;
@@ -311,6 +448,7 @@ export class AnswerKeyService {
         id: puzzlePageId,
         pageNumber: currentPages.length + idx + 1,
         pageType: 'puzzle',
+        isAnswerKey: false,
         puzzleId: puzzle.id,
         puzzleType: puzzle.type,
         sourcePuzzleId: puzzle.id,
@@ -338,11 +476,9 @@ export class AnswerKeyService {
       }
     });
 
-    // Assemble updated pages list based on answerKeyMode
     let combinedPages: PageModel[] = [];
 
-    if (answerKeyMode === 'after_puzzle' || answerKeyMode === 'after_each_puzzle') {
-      // Interleaved: Each puzzle followed immediately by its solution
+    if (answerKeyMode === 'after_puzzle') {
       const interleaved: PageModel[] = [];
       newPuzzlePages.forEach((pPage, i) => {
         interleaved.push(pPage);
@@ -352,7 +488,6 @@ export class AnswerKeyService {
       });
       combinedPages = [...currentPages, ...interleaved];
     } else if (answerKeyMode === 'end_of_book' && newSolutionPages.length > 0) {
-      // Insert puzzle pages before existing solutions, and append solution pages at the end
       const firstSolutionIndex = currentPages.findIndex(p => this.isSolutionPage(p));
       if (firstSolutionIndex !== -1) {
         const beforeSolutions = currentPages.slice(0, firstSolutionIndex);
@@ -362,7 +497,6 @@ export class AnswerKeyService {
         combinedPages = [...currentPages, ...newPuzzlePages, ...newSolutionPages];
       }
     } else {
-      // No solutions created
       const firstSolutionIndex = currentPages.findIndex(p => this.isSolutionPage(p));
       if (firstSolutionIndex !== -1) {
         const beforeSolutions = currentPages.slice(0, firstSolutionIndex);
@@ -373,7 +507,6 @@ export class AnswerKeyService {
       }
     }
 
-    // Renumber all pages and synchronize all solution references
     const finalPages = this.synchronizeSolutionPageReferences(
       combinedPages.map((p, i) => ({ ...p, pageNumber: i + 1 }))
     );
@@ -414,14 +547,14 @@ export class AnswerKeyService {
   }
 
   /**
-   * Inserts a single generated puzzle with its corresponding dedicated solution page atomically
+   * Inserts a single generated puzzle with its corresponding dedicated solution page atomically.
    */
   static insertPuzzleWithSolution(options: {
     document: DocumentModel;
     project: Project;
     puzzle: GeneratedPuzzle;
     styleOptions?: Partial<PuzzleStyleOptions>;
-    answerKeyMode?: 'end_of_book' | 'after_puzzle' | 'after_each_puzzle' | 'none';
+    answerKeyMode?: AnswerKeyMode | string;
     autoAnswerKey?: boolean;
     theme?: BookTheme;
   }): {

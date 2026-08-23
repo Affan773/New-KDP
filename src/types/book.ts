@@ -102,12 +102,21 @@ export interface BookTheme {
   puzzleGridStyle: 'clean' | 'bold' | 'classic' | 'minimal' | 'playful';
 }
 
+export type AnswerKeyMode =
+  | 'none'
+  | 'after_puzzle'
+  | 'after_section'
+  | 'end_of_book'
+  | 'four_up'
+  | 'custom';
+
 export interface AnswerKeySettings {
-  mode: 'none' | 'after_puzzle' | 'after_section' | 'end_of_book' | 'four_up' | 'custom';
+  mode: AnswerKeyMode;
   puzzlesPerPage: 1 | 2 | 4 | 6;
   includeTitle: boolean;
   sectionLabels: boolean;
   startOnNewPage: boolean;
+  enabled?: boolean;
 }
 
 export interface BulkEditOptions {

@@ -33,6 +33,8 @@ export const ProjectsView: React.FC = () => {
     showConfirmDialog,
     refreshProjects,
     showToast,
+    setActiveProjectId,
+    setCurrentRoute,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -290,6 +292,16 @@ export const ProjectsView: React.FC = () => {
                       <Edit2 className="w-3.5 h-3.5" />
                     </button>
                     <button
+                      onClick={() => {
+                        setActiveProjectId(project.id);
+                        setCurrentRoute('kdp-content');
+                      }}
+                      className="p-1.5 text-neutral-400 hover:text-amber-500 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
+                      title="KDP Content Stage"
+                    >
+                      <BookOpen className="w-3.5 h-3.5" />
+                    </button>
+                    <button
                       onClick={() => duplicateProject(project.id)}
                       className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
                       title="Duplicate"
@@ -371,6 +383,16 @@ export const ProjectsView: React.FC = () => {
                   </td>
                   <td className="py-3.5 px-4 text-right">
                     <div className="flex items-center justify-end gap-1.5">
+                      <button
+                        onClick={() => {
+                          setActiveProjectId(project.id);
+                          setCurrentRoute('kdp-content');
+                        }}
+                        className="p-1.5 text-neutral-400 hover:text-amber-500"
+                        title="KDP Content Stage"
+                      >
+                        <BookOpen className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={() => duplicateProject(project.id)}
                         className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"

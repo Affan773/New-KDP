@@ -22,6 +22,7 @@ import {
   Magnet,
   Maximize,
   ChevronDown,
+  BookMarked,
 } from 'lucide-react';
 import { useEditor, RulerUnit } from '../../context/EditorContext';
 import { useApp } from '../../context/AppContext';
@@ -80,7 +81,7 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
     setCurrentPageIndex,
   } = useEditor();
 
-  const { activeProject } = useApp();
+  const { activeProject, setCurrentRoute } = useApp();
   const [showZoomMenu, setShowZoomMenu] = useState(false);
   const [showSnapMenu, setShowSnapMenu] = useState(false);
 
@@ -418,6 +419,16 @@ export const EditorToolbar: React.FC<EditorToolbarProps> = ({
             <span className="hidden md:inline">Settings</span>
           </button>
         )}
+
+        {/* KDP Book Content Dashboard */}
+        <button
+          onClick={() => setCurrentRoute('kdp-content')}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-300 text-xs font-bold transition-colors"
+          title="KDP Content-First Assistant (Interior & Cover)"
+        >
+          <BookMarked className="w-3.5 h-3.5 text-amber-500" />
+          <span className="hidden sm:inline">KDP Content</span>
+        </button>
 
         {/* Full Book Preview */}
         <button

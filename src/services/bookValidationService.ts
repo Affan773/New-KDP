@@ -352,17 +352,79 @@ export class BookValidationService {
       }
     }
 
-    // 5.4 Answer Key check
-    const answerKeyMode = project.bookSettings?.answerKey?.mode || 'end_of_book';
-    const answerKeyPages = pages.filter(p => p.isAnswerKey || p.pageType === 'answer_key');
-    if (puzzleElementsList.length > 0 && answerKeyMode === 'end_of_book' && answerKeyPages.length === 0) {
+    // 5.4 Answer Key & Solution Integrity Checks
+    const answerKeyMode = project.bookSettings?.answerKey?.mode || 'none';
+    const answerKeyPages = pages.filter(p => p.isAnswerKey === true || p.pageType === 'answer_key');
+    const normalPuzzlePages = pages.filter(p => !p.isAnswerKey && p.pageType !== 'answer_key' && (p.elements || []).some(el => el.type === 'puzzle'));
+
+    if (answerKeyMode === 'none' && answerKeyPages.length > 0) {
+      issues.push({
+        id: 'val-warn-unexpected-answer-key-pages',
+        severity: 'warning',
+        category: 'book',
+        title: 'Unexpected Solution Pages Present',
+        message: `Book is set to Answer Key Mode 'None', but contains ${answerKeyPages.length} solution page(s).`,
+        fixSuggestion: 'Remove leftover solution pages or update the Answer Key mode setting in Book Setup.',
+      });
+    } else if (answerKeyMode !== 'none' && normalPuzzlePages.length > 0 && answerKeyPages.length === 0) {
       issues.push({
         id: 'val-info-no-answer-key-pages',
         severity: 'info',
         category: 'book',
         title: 'No Dedicated Answer Key Pages Found',
-        message: 'This puzzle book is configured for End of Book solutions, but no solution key pages are currently generated.',
-        fixSuggestion: 'Generate solution pages or set Answer Key Mode to "No answer key".',
+        message: `This puzzle book is configured with solutions enabled (${answerKeyMode}), but no solution key pages were found.`,
+        fixSuggestion: 'Regenerate the book with solution pages enabled.',
+      });
+    }
+
+    // 5.5 State Leak Check: Normal puzzle pages must never have showSolution = true
+    const leakedPuzzlePages = normalPuzzlePages.filter(p =>
+      p.elements.some(el => el.type === 'puzzle' && el.previewData?.showSolution === true)
+    );
+    if (leakedPuzzlePages.length > 0) {
+      issues.push({
+        id: 'val-err-solution-on-puzzle-page',
+        severity: 'error',
+        category: 'puzzles',
+        title: 'Solution Revealed on Normal Puzzle Page',
+        message: `Found ${leakedPuzzlePages.length} puzzle page(s) (e.g. Page ${leakedPuzzlePages[0].pageNumber}) displaying solved answers instead of an unsolved puzzle grid.`,
+        pageIndex: pages.findIndex(p => p.id === leakedPuzzlePages[0].id),
+        pageNumber: leakedPuzzlePages[0].pageNumber,
+        fixSuggestion: 'Turn off solution display for normal puzzle pages.',
+      });
+    }
+
+    // 5.6 State Leak Check: Solution pages must never have showSolution = false
+    const unrevealedSolutionPages = answerKeyPages.filter(p =>
+      p.elements.some(el => el.type === 'puzzle' && el.previewData?.showSolution === false)
+    );
+    if (unrevealedSolutionPages.length > 0) {
+      issues.push({
+        id: 'val-warn-unsolved-answer-key',
+        severity: 'warning',
+        category: 'puzzles',
+        title: 'Answer Key Page Without Solution Highlights',
+        message: `Found ${unrevealedSolutionPages.length} solution page(s) (e.g. Page ${unrevealedSolutionPages[0].pageNumber}) where solution display is disabled.`,
+        pageIndex: pages.findIndex(p => p.id === unrevealedSolutionPages[0].id),
+        pageNumber: unrevealedSolutionPages[0].pageNumber,
+        fixSuggestion: 'Ensure showSolution is enabled for all answer key pages.',
+      });
+    }
+
+    // 5.7 Orphan Solution Check: Single-puzzle solution pages must point to an existing source puzzle
+    const orphanSolutionPages = answerKeyPages.filter(p => {
+      const sourceId = p.sourcePuzzleId || p.puzzleId;
+      if (!sourceId) return false;
+      return !pages.some(other => !other.isAnswerKey && other.pageType !== 'answer_key' && (other.puzzleId === sourceId || other.sourcePuzzleId === sourceId || other.elements.some(e => (e as any).sourcePuzzleId === sourceId || (e as any).puzzleData?.id === sourceId)));
+    });
+    if (orphanSolutionPages.length > 0) {
+      issues.push({
+        id: 'val-warn-orphan-solution-pages',
+        severity: 'warning',
+        category: 'puzzles',
+        title: 'Orphan Solution Pages Detected',
+        message: `${orphanSolutionPages.length} solution page(s) reference puzzle IDs that do not exist in the manuscript.`,
+        fixSuggestion: 'Synchronize solution page references.',
       });
     }
 

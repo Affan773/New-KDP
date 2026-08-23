@@ -17,8 +17,8 @@ export class PageNumberingService {
       frontMatterStyle: 'roman_lower',
       bodyStyle: 'arabic',
       position: 'bottom-center',
-      fontSize: 10,
-      fontFamily: 'Outfit',
+      fontSize: 16,
+      fontFamily: 'Plus Jakarta Sans',
       hideOnFrontMatter: true,
     };
   }
@@ -52,11 +52,7 @@ export class PageNumberingService {
    * Identifies whether a given page is a Solution / Answer Key page
    */
   static isSolutionPage(page: PageModel): boolean {
-    if (page.pageType === 'answer_key' || page.isAnswerKey) {
-      return true;
-    }
-    const nameLower = (page.name || '').toLowerCase();
-    return nameLower.includes('answer') || nameLower.includes('solution');
+    return page.pageType === 'answer_key' || page.isAnswerKey === true;
   }
 
   /**
@@ -189,7 +185,9 @@ export class PageNumberingService {
     if (isTop) {
       y = Math.max(6, Math.round(topMarginPx / 2 - boxHeight / 2));
     } else {
-      y = Math.round(canvasHeightPx - bottomMarginPx / 2 - boxHeight / 2);
+      // Moved UP by ~0.25 inches (24px at 96 DPI) to place page number completely inside KDP safe margin
+      const offset25InchesPx = 24;
+      y = Math.round(canvasHeightPx - bottomMarginPx / 2 - offset25InchesPx - boxHeight / 2);
     }
 
     if (position === 'bottom-center' || position === 'top-center') {
@@ -249,9 +247,11 @@ export class PageNumberingService {
     const position = numbering.position || 'bottom-center';
     const isTop = position.startsWith('top');
 
+    const offset25InchesPt = 0.25 * 72; // 18 pt (0.25 inches)
+
     const textY = isTop
       ? bleedOffsetY + topMarginPt / 2 + fontSizePt / 3
-      : bleedOffsetY + trimHeightPt - bottomMarginPt / 2 + fontSizePt / 3;
+      : bleedOffsetY + trimHeightPt - (bottomMarginPt / 2 + offset25InchesPt) + fontSizePt / 3;
 
     let textX = bleedOffsetX + trimWidthPt / 2;
     let align: 'left' | 'center' | 'right' = 'center';

@@ -55,7 +55,7 @@ export const BookStylesModal: React.FC<BookStylesModalProps> = ({ isOpen, onClos
     // 2. Propagate to Canvas Elements in Document according to scope
     if (document && document.pages.length > 0) {
       const updatedPages = document.pages.map(page => {
-        const isSolution = page.pageType === 'answer_key' || page.name.toLowerCase().includes('solution') || page.name.toLowerCase().includes('answer');
+        const isSolution = page.pageType === 'answer_key' || page.isAnswerKey === true;
         const isFrontMatter = page.pageType === 'title' || page.pageType === 'copyright' || page.pageType === 'instructions' || page.pageType === 'toc' || page.pageNumber <= 3;
         const isPuzzle = !isSolution && !isFrontMatter;
 

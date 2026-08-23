@@ -27,7 +27,7 @@ export class PageCompositionEngine {
   /**
    * Calculates dimensions and margins in pixels (at standard 96 DPI screen preview)
    */
-  static getPageBounds(trimSize: TrimSize, bleed: 'No Bleed' | 'Bleed') {
+  static getPageBounds(trimSize: TrimSize, bleed: 'No Bleed' | 'Bleed', pageNumber?: number) {
     const isBleed = bleed === 'Bleed';
     const widthInches = isBleed ? trimSize.width + 0.125 : trimSize.width;
     const heightInches = isBleed ? trimSize.height + 0.25 : trimSize.height;
@@ -36,9 +36,15 @@ export class PageCompositionEngine {
     const heightPx = Math.round(heightInches * 96);
 
     const marginTopPx = Math.round(0.5 * 96);
-    const marginBottomPx = Math.round(0.5 * 96);
-    const marginInsidePx = Math.round(0.75 * 96); // Gutter
-    const marginOutsidePx = Math.round(0.5 * 96);
+    // Increase bottom margin to 0.625" (60px) for generous bottom clearance under puzzles
+    const marginBottomPx = Math.round(0.625 * 96);
+    const marginInsidePx = Math.round(0.75 * 96); // Inside Gutter
+    const marginOutsidePx = Math.round(0.5 * 96); // Outside Margin
+
+    // Mirrored Margins: Even pages (Verso / Left) have gutter on the right; Odd pages (Recto / Right) have gutter on the left
+    const isEvenPage = typeof pageNumber === 'number' && pageNumber % 2 === 0;
+    const leftMarginPx = isEvenPage ? marginOutsidePx : marginInsidePx;
+    const rightMarginPx = isEvenPage ? marginInsidePx : marginOutsidePx;
 
     const contentWidth = widthPx - marginInsidePx - marginOutsidePx;
     const contentHeight = heightPx - marginTopPx - marginBottomPx;
@@ -50,6 +56,8 @@ export class PageCompositionEngine {
       marginBottomPx,
       marginInsidePx,
       marginOutsidePx,
+      leftMarginPx,
+      rightMarginPx,
       contentWidth,
       contentHeight,
     };
@@ -338,30 +346,31 @@ Printed for Amazon KDP Print on Demand.`;
     bounds: ReturnType<typeof PageCompositionEngine.getPageBounds>
   ): PageModel {
     const elements: CanvasElement[] = [];
-    const { marginInsidePx, marginTopPx, contentWidth, contentHeight } = bounds;
+    const { marginTopPx, contentWidth, contentHeight } = bounds;
+    const startX = bounds.leftMarginPx !== undefined ? bounds.leftMarginPx : bounds.marginInsidePx;
 
     // Helper to calculate layout slots
     const getSlots = () => {
       if (puzzlesPerPage === 1) {
         return [
           {
-            x: marginInsidePx,
+            x: startX,
             y: marginTopPx + 15,
             width: contentWidth,
-            height: contentHeight - 30,
+            height: contentHeight - 20,
           },
         ];
       } else if (puzzlesPerPage === 2) {
         const slotH = Math.floor((contentHeight - 40) / 2);
         return [
           {
-            x: marginInsidePx,
+            x: startX,
             y: marginTopPx + 10,
             width: contentWidth,
             height: slotH,
           },
           {
-            x: marginInsidePx,
+            x: startX,
             y: marginTopPx + slotH + 30,
             width: contentWidth,
             height: slotH,
@@ -372,10 +381,10 @@ Printed for Amazon KDP Print on Demand.`;
         const slotW = Math.floor((contentWidth - 20) / 2);
         const slotH = Math.floor((contentHeight - 40) / 2);
         return [
-          { x: marginInsidePx, y: marginTopPx + 10, width: slotW, height: slotH },
-          { x: marginInsidePx + slotW + 20, y: marginTopPx + 10, width: slotW, height: slotH },
-          { x: marginInsidePx, y: marginTopPx + slotH + 30, width: slotW, height: slotH },
-          { x: marginInsidePx + slotW + 20, y: marginTopPx + slotH + 30, width: slotW, height: slotH },
+          { x: startX, y: marginTopPx + 10, width: slotW, height: slotH },
+          { x: startX + slotW + 20, y: marginTopPx + 10, width: slotW, height: slotH },
+          { x: startX, y: marginTopPx + slotH + 30, width: slotW, height: slotH },
+          { x: startX + slotW + 20, y: marginTopPx + slotH + 30, width: slotW, height: slotH },
         ];
       }
     };
@@ -391,7 +400,7 @@ Printed for Amazon KDP Print on Demand.`;
       elements.push({
         id: elementId,
         type: 'puzzle',
-        name: puzzle.title || `Puzzle #${puzzle.settings.puzzleNumber || pageNumber}`,
+        name: puzzle.title || `Puzzle #${puzzle.settings?.puzzleNumber || pageNumber}`,
         x: slot.x,
         y: slot.y,
         width: slot.width,
@@ -405,6 +414,9 @@ Printed for Amazon KDP Print on Demand.`;
         difficulty: puzzle.difficulty,
         title: puzzle.title,
         puzzleData: puzzle as any,
+        sourcePuzzleId: puzzle.id,
+        sourcePuzzlePageId: `page-${projectId}-${pageNumber}`,
+        sourcePuzzleElementId: elementId,
         previewData: {
           ...DEFAULT_PUZZLE_STYLE,
           fontFamily: theme.fontBody,
@@ -418,6 +430,9 @@ Printed for Amazon KDP Print on Demand.`;
       id: `page-${projectId}-${pageNumber}`,
       pageNumber,
       pageType: 'puzzle',
+      isAnswerKey: false,
+      puzzleId: pagePuzzles[0]?.id,
+      sourcePuzzleId: pagePuzzles[0]?.id,
       sectionId: section?.id,
       name: `Puzzle Page ${pageNumber}`,
       backgroundColor: '#FFFFFF',

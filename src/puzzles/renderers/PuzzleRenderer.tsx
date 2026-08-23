@@ -97,18 +97,18 @@ export const VISUAL_PRESETS: Record<PuzzleVisualPresetKey, Partial<PuzzleStyleOp
 
 export const DEFAULT_PUZZLE_STYLE: PuzzleStyleOptions = {
   fontFamily: 'Plus Jakarta Sans, sans-serif',
-  titleFontSize: 16,
-  subtitleFontSize: 12,
-  instructionsFontSize: 10,
-  gridFontSize: 13,
-  clueFontSize: 10,
+  titleFontSize: 32,
+  subtitleFontSize: 14,
+  instructionsFontSize: 12,
+  gridFontSize: 40,
+  clueFontSize: 26,
   textColor: '#111827',
   borderColor: '#111827',
   titleColor: '#111827',
   instructionsColor: '#6B7280',
   gridBorderWidth: 2,
   cellBorderWidth: 1,
-  cellPadding: 2,
+  cellPadding: 3,
   lineColor: '#374151',
   highlightColor: '#F59E0B',
   showTitle: true,
@@ -163,11 +163,13 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
     >
       {/* HEADER SECTION */}
       {style.showTitle && (
-        <div className="text-center mb-2 pb-1.5 border-b border-neutral-200/80 shrink-0">
+        <div className="text-center mb-3 pb-2 border-b border-neutral-200/80 shrink-0">
           <div className="flex items-center justify-between gap-2">
             <h3
               style={{
-                fontSize: `${style.titleFontSize}px`,
+                fontFamily: 'Outfit, sans-serif',
+                fontSize: `${style.titleFontSize || 32}px`,
+                fontWeight: 700,
                 color: style.titleColor || style.textColor || '#111827',
               }}
               className="font-bold uppercase tracking-wider truncate flex-1 text-center"
@@ -175,7 +177,7 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
               {puzzle.title || puzzle.type}
             </h3>
             {showSolution && (
-              <span className="text-[9px] font-bold px-2 py-0.5 bg-amber-500 text-neutral-950 rounded-full shadow-xs shrink-0">
+              <span className="text-[10px] font-bold px-2.5 py-0.5 bg-amber-500 text-neutral-950 rounded-full shadow-xs shrink-0 font-sans">
                 SOLUTION KEY
               </span>
             )}
@@ -183,8 +185,11 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
 
           {style.showSubtitle && puzzle.settings?.subtitle && (
             <p
-              style={{ fontSize: `${style.subtitleFontSize || 11}px` }}
-              className="text-neutral-600 font-medium mt-0.5 truncate"
+              style={{
+                fontFamily: 'Plus Jakarta Sans, sans-serif',
+                fontSize: `${style.subtitleFontSize || 14}px`,
+              }}
+              className="text-neutral-600 font-medium mt-1 truncate"
             >
               {String(puzzle.settings.subtitle)}
             </p>
@@ -193,10 +198,11 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
           {style.showInstructions && (
             <p
               style={{
-                fontSize: `${style.instructionsFontSize || 10}px`,
+                fontFamily: 'Plus Jakarta Sans, sans-serif',
+                fontSize: `${style.instructionsFontSize || 12}px`,
                 color: style.instructionsColor || '#6B7280',
               }}
-              className="italic mt-0.5"
+              className="italic mt-1"
             >
               {puzzle.settings?.instructions || getInstructions(puzzle.type, showSolution)}
             </p>
@@ -216,12 +222,15 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
       )}
 
       {/* PUZZLE CONTENT VIEW (WITH OPTIONAL SIDEBAR FOR LEFT/RIGHT WORD LIST) */}
-      <div className={`flex-1 flex items-center justify-center overflow-hidden min-h-0 ${
-        showWordList && (wordListPos === 'left' || wordListPos === 'right') ? 'flex-row gap-3' : 'flex-col'
-      }`}>
+      <div
+        style={{ boxSizing: 'border-box' }}
+        className={`flex-1 flex items-center justify-center overflow-hidden min-h-0 min-w-0 w-full ${
+          showWordList && (wordListPos === 'left' || wordListPos === 'right') ? 'flex-row gap-3' : 'flex-col'
+        }`}
+      >
         {/* LEFT WORD BANK */}
         {showWordList && wordListPos === 'left' && (
-          <div className="w-1/3 max-h-full overflow-y-auto pr-2 border-r border-neutral-200">
+          <div className="w-1/3 max-w-[33.333%] min-w-0 max-h-full overflow-y-auto pr-2 border-r border-neutral-200 overflow-hidden box-border shrink-0">
             <WordSearchBank
               data={puzzle.data as WordSearchData}
               settings={wsSettings}
@@ -231,7 +240,7 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
           </div>
         )}
 
-        <div className="flex-1 flex items-center justify-center overflow-hidden w-full h-full min-h-0">
+        <div className="flex-1 flex items-center justify-center overflow-hidden w-full h-full min-h-0 min-w-0 box-border">
           {puzzle.type === 'word_search' && (
             <WordSearchGrid
               data={puzzle.data as WordSearchData}
@@ -301,7 +310,7 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
 
         {/* RIGHT WORD BANK */}
         {showWordList && wordListPos === 'right' && (
-          <div className="w-1/3 max-h-full overflow-y-auto pl-2 border-l border-neutral-200">
+          <div className="w-1/3 max-w-[33.333%] min-w-0 max-h-full overflow-y-auto pl-2 border-l border-neutral-200 overflow-hidden box-border shrink-0">
             <WordSearchBank
               data={puzzle.data as WordSearchData}
               settings={wsSettings}
@@ -319,7 +328,7 @@ export const PuzzleRenderer: React.FC<PuzzleRendererProps> = ({
           settings={wsSettings}
           style={style}
           showSolution={showSolution}
-          className="mt-2.5 pt-2 border-t border-neutral-200/80 shrink-0"
+          className="mt-2.5 pt-2 border-t border-neutral-200/80 shrink-0 w-full min-w-0 overflow-hidden box-border"
         />
       )}
     </div>
@@ -362,31 +371,40 @@ const WordSearchBank: React.FC<{
   const words = data.words || [];
   if (words.length === 0) return null;
 
-  const cols = settings?.wordListColumns || (words.length > 15 ? 4 : words.length > 8 ? 3 : 2);
+  const cols = settings?.wordListColumns || (words.length > 15 ? 3 : words.length > 6 ? 2 : 2);
   const gridColClass =
     cols === 4 ? 'grid-cols-4' : cols === 3 ? 'grid-cols-3' : cols === 2 ? 'grid-cols-2' : 'grid-cols-1';
 
+  const wordBankFontSize = Math.max(16, style.clueFontSize || 26);
+  const wordBankHeadingFontSize = Math.max(18, (style.clueFontSize ? style.clueFontSize + 2 : 28));
+
   return (
-    <div className={className}>
+    <div className={`mt-3 pt-2 ${className}`}>
       <div
-        style={{ fontSize: `${Math.max(9, style.clueFontSize)}px` }}
-        className="font-bold uppercase tracking-wider text-neutral-500 mb-1 flex items-center justify-between"
+        style={{
+          fontFamily: 'Plus Jakarta Sans, sans-serif',
+          fontSize: `${wordBankHeadingFontSize}px`,
+        }}
+        className="font-bold uppercase tracking-wider text-neutral-700 mb-2 flex items-center justify-between"
       >
         <span>Word List ({words.length})</span>
       </div>
       <div
-        style={{ fontSize: `${style.clueFontSize}px` }}
-        className={`grid ${gridColClass} gap-x-2 gap-y-0.5 font-medium text-neutral-800`}
+        style={{
+          fontFamily: 'Plus Jakarta Sans, sans-serif',
+          fontSize: `${wordBankFontSize}px`,
+        }}
+        className={`grid ${gridColClass} gap-x-4 gap-y-1 font-medium text-neutral-900 leading-snug`}
       >
         {words.map((word, idx) => (
           <div
             key={idx}
-            className={`truncate flex items-center gap-1 ${
+            className={`break-words min-w-0 flex items-center gap-1.5 ${
               showSolution ? 'font-bold text-amber-700' : ''
             }`}
           >
-            <span className="text-neutral-400">•</span>
-            <span>{word}</span>
+            <span className="text-neutral-400 shrink-0 text-[0.8em]">•</span>
+            <span className="truncate">{word}</span>
           </div>
         ))}
       </div>
@@ -422,61 +440,80 @@ const WordSearchGrid: React.FC<{
 
   return (
     <div
+      className="flex items-center justify-center w-full h-full min-w-0 min-h-0 overflow-hidden"
       style={{
-        display: 'grid',
-        gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
-        gap: '2px',
-        fontSize: `${style.gridFontSize}px`,
-        borderColor: style.borderColor || '#CBD5E1',
-        borderWidth: `${style.gridBorderWidth || 1}px`,
-        borderStyle: style.borderStyle || 'solid',
+        paddingLeft: '4%',
+        paddingRight: '4%',
+        boxSizing: 'border-box',
       }}
-      className="w-full max-w-lg aspect-square p-2 rounded bg-neutral-50/50 font-mono font-bold text-center select-none"
     >
-      {grid.map((row, r) =>
-        row.map((letter, c) => {
-          const isSolved = solutionCoords.has(`${r},${c}`);
+      <div
+        style={{
+          width: 'min(100%, 34rem)',
+          maxWidth: 'calc(100% - 16px)',
+          maxHeight: 'calc(100% - 16px)',
+          aspectRatio: '1 / 1',
+          boxSizing: 'border-box',
+          display: 'grid',
+          gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`,
+          gap: '2px',
+          fontFamily: 'Outfit, sans-serif',
+          fontWeight: 700,
+          fontSize: `${style.gridFontSize || 40}px`,
+          borderColor: style.borderColor || '#111827',
+          borderWidth: `${style.gridBorderWidth || 2}px`,
+          borderStyle: style.borderStyle || 'solid',
+        }}
+        className="p-2.5 rounded bg-neutral-50/50 font-bold text-center select-none overflow-hidden shadow-2xs"
+      >
+        {grid.map((row, r) =>
+          row.map((letter, c) => {
+            const isSolved = solutionCoords.has(`${r},${c}`);
 
-          let cellBg = 'transparent';
-          let cellBorder = 'transparent';
-          let cellRadius = '2px';
-          let textDecoration = 'none';
+            let cellBg = 'transparent';
+            let cellBorder = 'transparent';
+            let cellRadius = '3px';
+            let textDecoration = 'none';
 
-          if (isSolved) {
-            if (solutionMode === 'highlight') {
-              cellBg = style.highlightColor || '#FDE68A';
-            } else if (solutionMode === 'capsule') {
-              cellBg = `${style.highlightColor || '#F59E0B'}33`;
-              cellBorder = style.highlightColor || '#F59E0B';
-              cellRadius = '9999px';
-            } else if (solutionMode === 'circle') {
-              cellBorder = style.highlightColor || '#F59E0B';
-              cellRadius = '9999px';
-            } else if (solutionMode === 'underline') {
-              textDecoration = 'underline';
+            if (isSolved) {
+              if (solutionMode === 'highlight') {
+                cellBg = style.highlightColor || '#FDE68A';
+              } else if (solutionMode === 'capsule') {
+                cellBg = `${style.highlightColor || '#F59E0B'}33`;
+                cellBorder = style.highlightColor || '#F59E0B';
+                cellRadius = '9999px';
+              } else if (solutionMode === 'circle') {
+                cellBorder = style.highlightColor || '#F59E0B';
+                cellRadius = '9999px';
+              } else if (solutionMode === 'underline') {
+                textDecoration = 'underline';
+              }
             }
-          }
 
-          return (
-            <div
-              key={`${r}-${c}`}
-              style={{
-                backgroundColor: cellBg,
-                borderColor: cellBorder,
-                borderWidth: cellBorder !== 'transparent' ? '1.5px' : '0px',
-                borderRadius: cellRadius,
-                textDecoration,
-                color: isSolved && solutionMode === 'highlight' ? '#000000' : style.textColor || '#111827',
-              }}
-              className={`flex items-center justify-center transition-all ${
-                isSolved ? 'font-black scale-105 shadow-2xs' : ''
-              }`}
-            >
-              {letter}
-            </div>
-          );
-        })
-      )}
+            return (
+              <div
+                key={`${r}-${c}`}
+                style={{
+                  backgroundColor: cellBg,
+                  borderColor: cellBorder,
+                  borderWidth: cellBorder !== 'transparent' ? '1.5px' : '0px',
+                  borderRadius: cellRadius,
+                  textDecoration,
+                  color: isSolved && solutionMode === 'highlight' ? '#000000' : style.textColor || '#111827',
+                  fontFamily: 'Outfit, sans-serif',
+                  fontWeight: 700,
+                  lineHeight: 1,
+                }}
+                className={`flex items-center justify-center transition-all ${
+                  isSolved ? 'font-black scale-105 shadow-2xs' : ''
+                }`}
+              >
+                {letter}
+              </div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 };

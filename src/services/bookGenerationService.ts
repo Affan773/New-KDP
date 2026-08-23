@@ -1,5 +1,6 @@
 import { calculateKdpCoverDimensions, calculateKdpSpineWidth } from '../constants/kdp';
 import { PuzzleRegistry } from '../puzzles/core/PuzzleRegistry';
+import { DEFAULT_PUZZLE_STYLE } from '../puzzles/renderers/PuzzleRenderer';
 import { GeneratedPuzzle, PuzzleType } from '../puzzles/types';
 import {
   AnswerKeySettings,
@@ -15,7 +16,7 @@ import {
 import { DocumentModel, PageModel, Project, TrimSize } from '../types/project';
 import { PageCompositionEngine } from './pageCompositionEngine';
 import { TocService } from './tocService';
-import { AnswerKeyService } from './answerKeyService';
+import { AnswerKeyService, normalizeAnswerKeyMode } from './answerKeyService';
 
 export interface BookGenerationRequest {
   metadata: BookMetadata;
@@ -187,23 +188,27 @@ export class BookGenerationService {
       });
     }
 
-    // 4. STAGE 4: COMPOSE CONTENT / PUZZLE PAGES & SECTION SOLUTIONS
+    // 4. STAGE 4: COMPOSE CONTENT / PUZZLE PAGES
     if (signal?.aborted) throw new Error('Generation cancelled by user');
     onProgress?.({ percent: 75, stage: 'Composing interior content & section pages...' });
     await new Promise(r => setTimeout(r, 60));
 
     const updatedSections: BookSection[] = [];
+    const effectiveAnswerKeyMode = normalizeAnswerKeyMode(answerKey?.mode);
 
     // Map puzzle ID to original puzzle page number, page ID, and element ID
     const puzzlePageMap = new Map<string, number>();
     const puzzlePageIdMap = new Map<string, string>();
     const puzzleElementIdMap = new Map<string, string>();
 
+    const contentPagesBySection = new Map<string, PageModel[]>();
+    const flatContentPages: PageModel[] = [];
+
     // If we have sections, compose by section
     if (sections.length > 0) {
       for (const section of sections) {
         const secPuzzles = puzzlesBySection.get(section.id) || [];
-        const sectionPageIds: string[] = [];
+        const sectionContentPages: PageModel[] = [];
 
         for (let i = 0; i < secPuzzles.length; i += puzzlesPerPage) {
           const chunk = secPuzzles.slice(i, i + puzzlesPerPage);
@@ -216,6 +221,8 @@ export class BookGenerationService {
             section,
             bounds
           );
+          page.isAnswerKey = false;
+          page.pageType = 'puzzle';
           chunk.forEach((p, idx) => {
             puzzlePageMap.set(p.id, page.pageNumber);
             puzzlePageIdMap.set(p.id, page.id);
@@ -224,81 +231,10 @@ export class BookGenerationService {
               puzzleElementIdMap.set(p.id, el.id);
             }
           });
-          pages.push(page);
-          sectionPageIds.push(page.id);
-
-          // If mode is 'after_puzzle', insert solution immediately (1 per page for word search)
-          if (answerKey.mode === 'after_puzzle') {
-            for (const puzzle of chunk) {
-              const origPageNum = puzzlePageMap.get(puzzle.id) || page.pageNumber;
-              const origPageId = puzzlePageIdMap.get(puzzle.id) || page.id;
-              const origElId = puzzleElementIdMap.get(puzzle.id);
-              const solPage = PageCompositionEngine.composeAnswerKeyPage(
-                projectId,
-                currentPageNumber++,
-                [puzzle],
-                theme,
-                bounds,
-                origPageNum,
-                origPageId,
-                origElId
-              );
-              solPage.sourcePuzzleId = puzzle.id;
-              solPage.puzzleId = puzzle.id;
-              solPage.sourcePuzzlePageId = origPageId;
-              solPage.sourcePuzzleElementId = origElId;
-              pages.push(solPage);
-              sectionPageIds.push(solPage.id);
-            }
-          }
+          sectionContentPages.push(page);
         }
 
-        // If mode is 'after_section', insert section solutions here (1 per page for word search)
-        if (answerKey.mode === 'after_section' && secPuzzles.length > 0) {
-          const isWordSearchSection = secPuzzles.some(p => p.type === 'word_search');
-          if (isWordSearchSection || puzzlesPerPage === 1) {
-            for (const puzzle of secPuzzles) {
-              const origPageNum = puzzlePageMap.get(puzzle.id);
-              const origPageId = puzzlePageIdMap.get(puzzle.id);
-              const origElId = puzzleElementIdMap.get(puzzle.id);
-              const solPage = PageCompositionEngine.composeAnswerKeyPage(
-                projectId,
-                currentPageNumber++,
-                [puzzle],
-                theme,
-                bounds,
-                origPageNum,
-                origPageId,
-                origElId
-              );
-              solPage.sourcePuzzleId = puzzle.id;
-              solPage.puzzleId = puzzle.id;
-              solPage.sourcePuzzlePageId = origPageId;
-              solPage.sourcePuzzleElementId = origElId;
-              pages.push(solPage);
-              sectionPageIds.push(solPage.id);
-            }
-          } else {
-            const solPerPage = answerKey.puzzlesPerPage || 4;
-            for (let s = 0; s < secPuzzles.length; s += solPerPage) {
-              const solChunk = secPuzzles.slice(s, s + solPerPage);
-              const secSolPage = PageCompositionEngine.composeAnswerKeyPage(
-                projectId,
-                currentPageNumber++,
-                solChunk,
-                theme,
-                bounds
-              );
-              pages.push(secSolPage);
-              sectionPageIds.push(secSolPage.id);
-            }
-          }
-        }
-
-        updatedSections.push({
-          ...section,
-          pageIds: sectionPageIds,
-        });
+        contentPagesBySection.set(section.id, sectionContentPages);
       }
     } else {
       // No sections defined, compose flat
@@ -313,6 +249,8 @@ export class BookGenerationService {
           undefined,
           bounds
         );
+        page.isAnswerKey = false;
+        page.pageType = 'puzzle';
         chunk.forEach((p, idx) => {
           puzzlePageMap.set(p.id, page.pageNumber);
           puzzlePageIdMap.set(p.id, page.id);
@@ -321,81 +259,145 @@ export class BookGenerationService {
             puzzleElementIdMap.set(p.id, el.id);
           }
         });
-        pages.push(page);
-
-        if (answerKey.mode === 'after_puzzle') {
-          for (const puzzle of chunk) {
-            const origPageNum = puzzlePageMap.get(puzzle.id) || page.pageNumber;
-            const origPageId = puzzlePageIdMap.get(puzzle.id) || page.id;
-            const origElId = puzzleElementIdMap.get(puzzle.id);
-            const solPage = PageCompositionEngine.composeAnswerKeyPage(
-              projectId,
-              currentPageNumber++,
-              [puzzle],
-              theme,
-              bounds,
-              origPageNum,
-              origPageId,
-              origElId
-            );
-            solPage.sourcePuzzleId = puzzle.id;
-            solPage.puzzleId = puzzle.id;
-            solPage.sourcePuzzlePageId = origPageId;
-            solPage.sourcePuzzleElementId = origElId;
-            pages.push(solPage);
-          }
-        }
+        flatContentPages.push(page);
       }
     }
 
-    // 5. STAGE 5: COMPOSE ANSWER KEY / SOLUTIONS (FOR END_OF_BOOK, FOUR_UP, CUSTOM)
+    // 5. STAGE 5: COMPOSE ANSWER KEY / SOLUTIONS VIA AUTHORITATIVE AnswerKeyService
     if (signal?.aborted) throw new Error('Generation cancelled by user');
     onProgress?.({ percent: 88, stage: 'Generating solution keys & answer pages...' });
     await new Promise(r => setTimeout(r, 60));
 
-    if (
-      (answerKey.mode === 'end_of_book' || answerKey.mode === 'four_up' || answerKey.mode === 'custom') &&
-      allGeneratedPuzzles.length > 0
-    ) {
-      const isWordSearchBook = allGeneratedPuzzles.some(p => p.type === 'word_search');
+    // The ONE authoritative function allowed to create Answer Key pages
+    const solutionPages = AnswerKeyService.generateSolutionPages({
+      projectId,
+      puzzles: allGeneratedPuzzles,
+      puzzlePageMap,
+      puzzlePageIdMap,
+      puzzleElementIdMap,
+      answerKey: {
+        ...answerKey,
+        mode: effectiveAnswerKeyMode,
+      },
+      theme,
+      bounds,
+      trimSize,
+      styleOptions: DEFAULT_PUZZLE_STYLE,
+    });
 
-      // For Word Search: 1 full dedicated solution page per puzzle
-      if (isWordSearchBook || puzzlesPerPage === 1) {
-        for (const puzzle of allGeneratedPuzzles) {
-          const origPageNum = puzzlePageMap.get(puzzle.id);
-          const origPageId = puzzlePageIdMap.get(puzzle.id);
-          const origElId = puzzleElementIdMap.get(puzzle.id);
-          const solPage = PageCompositionEngine.composeAnswerKeyPage(
-            projectId,
-            currentPageNumber++,
-            [puzzle],
-            theme,
-            bounds,
-            origPageNum,
-            origPageId,
-            origElId
-          );
-          solPage.sourcePuzzleId = puzzle.id;
-          solPage.puzzleId = puzzle.id;
-          solPage.sourcePuzzlePageId = origPageId;
-          solPage.sourcePuzzleElementId = origElId;
-          pages.push(solPage);
+    // Map each solution page by its sourcePuzzleId for precise placement
+    const solutionByPuzzleId = new Map<string, PageModel>();
+    solutionPages.forEach(solPage => {
+      if (solPage.sourcePuzzleId) {
+        solutionByPuzzleId.set(solPage.sourcePuzzleId, solPage);
+      } else if (solPage.puzzleId) {
+        solutionByPuzzleId.set(solPage.puzzleId, solPage);
+      }
+    });
+
+    // Assemble final manuscript pages based on effectiveAnswerKeyMode
+    if (sections.length > 0) {
+      for (const section of sections) {
+        const secContent = contentPagesBySection.get(section.id) || [];
+        const secPuzzles = puzzlesBySection.get(section.id) || [];
+        const sectionPageIds: string[] = [];
+
+        if (effectiveAnswerKeyMode === 'after_puzzle') {
+          // Interleaved: each puzzle page followed immediately by its solution(s)
+          for (const pPage of secContent) {
+            pages.push(pPage);
+            sectionPageIds.push(pPage.id);
+            const puzElements = pPage.elements.filter(e => e.type === 'puzzle');
+            for (const pEl of puzElements) {
+              const puzId = (pEl as any).sourcePuzzleId || (pEl as any).puzzleData?.id;
+              if (puzId && solutionByPuzzleId.has(puzId)) {
+                const sol = solutionByPuzzleId.get(puzId)!;
+                pages.push(sol);
+                sectionPageIds.push(sol.id);
+              }
+            }
+          }
+        } else if (effectiveAnswerKeyMode === 'after_section') {
+          // Section puzzles first, then section solutions immediately after
+          for (const pPage of secContent) {
+            pages.push(pPage);
+            sectionPageIds.push(pPage.id);
+          }
+          for (const puz of secPuzzles) {
+            if (solutionByPuzzleId.has(puz.id)) {
+              const sol = solutionByPuzzleId.get(puz.id)!;
+              pages.push(sol);
+              sectionPageIds.push(sol.id);
+            }
+          }
+        } else {
+          // 'end_of_book', 'four_up', 'custom', 'none'
+          for (const pPage of secContent) {
+            pages.push(pPage);
+            sectionPageIds.push(pPage.id);
+          }
         }
+
+        updatedSections.push({
+          ...section,
+          pageIds: sectionPageIds,
+        });
+      }
+
+      // If end_of_book, four_up, or custom with sections: append all solution pages at the end
+      if (effectiveAnswerKeyMode === 'end_of_book' || effectiveAnswerKeyMode === 'four_up' || effectiveAnswerKeyMode === 'custom') {
+        solutionPages.forEach(solPage => {
+          pages.push(solPage);
+        });
+      }
+    } else {
+      // Flat book (no sections)
+      if (effectiveAnswerKeyMode === 'after_puzzle') {
+        for (const pPage of flatContentPages) {
+          pages.push(pPage);
+          const puzElements = pPage.elements.filter(e => e.type === 'puzzle');
+          for (const pEl of puzElements) {
+            const puzId = (pEl as any).sourcePuzzleId || (pEl as any).puzzleData?.id;
+            if (puzId && solutionByPuzzleId.has(puzId)) {
+              const sol = solutionByPuzzleId.get(puzId)!;
+              pages.push(sol);
+            }
+          }
+        }
+      } else if (effectiveAnswerKeyMode === 'none') {
+        flatContentPages.forEach(p => pages.push(p));
       } else {
-        const solutionsPerPage = answerKey.mode === 'four_up' ? 4 : (answerKey.puzzlesPerPage || 4);
-        for (let i = 0; i < allGeneratedPuzzles.length; i += solutionsPerPage) {
-          const chunk = allGeneratedPuzzles.slice(i, i + solutionsPerPage);
-          const solPage = PageCompositionEngine.composeAnswerKeyPage(
-            projectId,
-            currentPageNumber++,
-            chunk,
-            theme,
-            bounds
-          );
-          pages.push(solPage);
-        }
+        // 'end_of_book', 'after_section' (without sections), 'four_up', 'custom'
+        flatContentPages.forEach(p => pages.push(p));
+        solutionPages.forEach(sol => pages.push(sol));
       }
     }
+
+    // Renumber all pages sequentially starting from page 1
+    pages.forEach((p, idx) => {
+      p.pageNumber = idx + 1;
+    });
+
+    // Explicitly enforce state safety on all created pages
+    pages.forEach(p => {
+      if (p.pageType === 'answer_key' || p.isAnswerKey === true) {
+        p.isAnswerKey = true;
+        p.pageType = 'answer_key';
+        p.elements.forEach(el => {
+          if (el.type === 'puzzle' && el.previewData) {
+            el.previewData.showSolution = true;
+            el.previewData.showWordBank = false;
+          }
+        });
+      } else {
+        p.isAnswerKey = false;
+        p.elements.forEach(el => {
+          if (el.type === 'puzzle' && el.previewData) {
+            el.previewData.showSolution = false;
+          }
+        });
+      }
+    });
 
     // Update Table of Contents content if enabled
     if (tocPageIndex >= 0 && pages[tocPageIndex]) {
@@ -424,6 +426,26 @@ export class BookGenerationService {
     const totalPages = synchronizedPages.length;
     const spineWidth = calculateKdpSpineWidth(totalPages, paperType);
     const coverDims = calculateKdpCoverDimensions(trimSize.width, trimSize.height, spineWidth);
+
+    // Answer Key Diagnostics & Verification
+    const normalizedMode = normalizeAnswerKeyMode(answerKey?.mode);
+    const isWordSearchBook = allGeneratedPuzzles.some(p => p.type === 'word_search');
+    const expectedSolutionCount = normalizedMode === 'none' ? 0 : allGeneratedPuzzles.length;
+    const actualSolutionCount = synchronizedPages.filter(p => p.pageType === 'answer_key' || p.isAnswerKey === true).length;
+
+    console.log(`[ANSWER KEY] mode: ${normalizedMode}`);
+    console.log(`[ANSWER KEY] puzzles: ${allGeneratedPuzzles.length}`);
+    console.log(`[ANSWER KEY] generated solutions: ${solutionPages.length}`);
+    console.log(`[ANSWER KEY] final solution pages: ${actualSolutionCount}`);
+
+    if (isWordSearchBook && normalizedMode !== 'none' && actualSolutionCount !== expectedSolutionCount) {
+      console.error(`[ANSWER KEY] validation: FAILED (expected ${expectedSolutionCount}, found ${actualSolutionCount})`);
+      throw new Error(
+        `ANSWER_KEY_GENERATION_FAILED: expected ${expectedSolutionCount} solution pages but generated ${actualSolutionCount}.`
+      );
+    } else {
+      console.log(`[ANSWER KEY] validation: PASS`);
+    }
 
     const bookSettings: BookProjectSettings = {
       schemaVersion: 4,

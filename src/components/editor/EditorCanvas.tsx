@@ -900,8 +900,11 @@ export const EditorCanvas: React.FC = () => {
                     }
 
                     if (puzzleObj) {
-                      const styleOptions = (el.previewData || {}) as any;
-                      const isSolPage = currentPage && PageNumberingService.isSolutionPage(currentPage);
+                      const isSolPage = currentPage ? PageNumberingService.isSolutionPage(currentPage) : false;
+                      const styleOptions = {
+                        ...(el.previewData || {}),
+                        showSolution: isSolPage,
+                      } as any;
                       const displayPuzzleObj =
                         isSolPage && document
                           ? {
@@ -919,6 +922,7 @@ export const EditorCanvas: React.FC = () => {
                           <PuzzleRenderer
                             puzzle={displayPuzzleObj}
                             styleOptions={styleOptions}
+                            showSolutionOverride={isSolPage}
                             width={el.width}
                             height={el.height}
                           />

@@ -89,8 +89,172 @@ export interface KDPProjectConfig {
   validationStatus: KDPValidationStatus;
   validationErrors: string[];
   validationWarnings: string[];
+  // Phase 3: Content-First Engine Extensions
+  aiDisclosureExplicitlySelected?: boolean;
+  // Phase 4: Book Details Engine Extensions
+  contributorType?: KDPContributorType;
+  isPartOfSeries?: boolean;
+  seriesName?: string;
+  seriesNumber?: string;
+  editionNumber?: string;
+  editionNotes?: string;
+  readingAge?: string;
+  gradeRange?: string;
+  metadataApprovalStatus?: KDPMetadataApprovalStatus;
+  metadataVersions?: KDPMetadataVersionRecord[];
+  contentVersion?: {
+    interiorVersion: number;
+    coverVersion: number;
+    printConfigVersion: number;
+    interiorOutdated?: boolean;
+    coverOutdated?: boolean;
+    lastGeneratedPageCount?: number;
+    lastGeneratedTrimSize?: string;
+    lastGeneratedBleed?: string;
+    lastGeneratedPaperType?: string;
+    lastGeneratedInteriorType?: string;
+    lastGeneratedFormat?: string;
+    outdatedReason?: string;
+  };
   createdAt: string;
   updatedAt: string;
+}
+
+export type KDPContributorType =
+  | 'Author'
+  | 'Illustrator'
+  | 'Editor'
+  | 'Translator'
+  | 'Other';
+
+export type KDPMetadataApprovalStatus = 'DRAFT' | 'REVIEW' | 'APPROVED';
+
+export interface KDPMetadataVersionRecord {
+  id: string;
+  versionNumber: number;
+  timestamp: string;
+  title: string;
+  subtitle: string;
+  author: string;
+  contributorType?: KDPContributorType;
+  contributorName?: string;
+  description: string;
+  keywords: string[];
+  categories: string[];
+  seriesName?: string;
+  seriesNumber?: string;
+  editionNumber?: string;
+  editionNotes?: string;
+  language: string;
+  readingAge?: string;
+  gradeRange?: string;
+  aiContentType: KDPAiContentType;
+  approvalStatus: KDPMetadataApprovalStatus;
+  userNotes?: string;
+}
+
+export interface KDPTitleSuggestion {
+  title: string;
+  subtitle: string;
+  reason: string;
+  score: number;
+  style: 'Direct & Descriptive' | 'Punchy & Engaging' | 'Theme Focused' | 'Difficulty Focused' | 'Volume / Count Focused';
+}
+
+export interface KDPSubtitleSuggestion {
+  subtitle: string;
+  reason: string;
+  focus: string;
+}
+
+export interface KDPCategorySuggestion {
+  name: string;
+  path: string;
+  reason: string;
+  confidence: number;
+  isKdpStandard: boolean;
+}
+
+export interface KDPKeywordItem {
+  text: string;
+  quality: 'GOOD' | 'REVIEW' | 'INVALID';
+  charCount: number;
+  reason?: string;
+  isCompetitorRisk?: boolean;
+}
+
+export interface KDPMetadataConsistencyReport {
+  isConsistent: boolean;
+  checks: {
+    id: string;
+    label: string;
+    passed: boolean;
+    severity: 'ERROR' | 'WARNING' | 'INFO';
+    message: string;
+    detectedValue?: string | number;
+    metadataValue?: string | number;
+    fixAction?: string;
+  }[];
+  detectedPuzzleCount: number;
+  detectedAnswerCount: number;
+  detectedPageCount: number;
+  detectedTrimSize: string;
+}
+
+export interface KDPBookDetailsValidationReport {
+  overallStatus: 'PASS' | 'WARNING' | 'FAIL';
+  completionPercentage: number;
+  errors: string[];
+  warnings: string[];
+  checks: {
+    field: string;
+    label: string;
+    status: 'PASS' | 'WARNING' | 'FAIL';
+    message: string;
+  }[];
+  consistency: KDPMetadataConsistencyReport;
+  timestamp: string;
+}
+
+export type KDPWorkflowStep =
+  | 'content'
+  | 'details'
+  | 'pricing'
+  | 'review'
+  | 'publish';
+
+export type KDPContentValidationStatus =
+  | 'NOT_READY'
+  | 'READY_WITH_WARNINGS'
+  | 'READY';
+
+export interface KDPContentValidationRule {
+  id: string;
+  category: 'Manuscript' | 'Cover' | 'Print' | 'AI' | 'Project';
+  label: string;
+  status: 'PASS' | 'WARNING' | 'FAIL';
+  message: string;
+  details?: string;
+  fixAction?: string;
+}
+
+export interface KDPContentValidationReport {
+  overallStatus: KDPContentValidationStatus;
+  manuscriptValid: boolean;
+  coverValid: boolean;
+  printSettingsValid: boolean;
+  aiDisclosureValid: boolean;
+  projectValid: boolean;
+  errors: string[];
+  warnings: string[];
+  rules: KDPContentValidationRule[];
+  timestamp: string;
+  summary: {
+    passed: number;
+    warnings: number;
+    errors: number;
+    total: number;
+  };
 }
 
 export interface KDPExportPackageFile {

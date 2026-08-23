@@ -13,8 +13,10 @@ export interface CustomWordCategory {
 }
 
 export class WordListService {
+  private static customCategoriesCache: CustomWordCategory[] | null = null;
+
   /**
-   * Returns all categories (built-in combined with custom categories saved in localStorage)
+   * Returns all categories (built-in combined with custom categories saved in storage)
    */
   static getAllCategories(): CustomWordCategory[] {
     const builtInList: CustomWordCategory[] = Object.values(BUILT_IN_WORD_THEMES).map(theme => ({
@@ -30,24 +32,29 @@ export class WordListService {
   }
 
   /**
-   * Retrieves user-created custom categories from localStorage
+   * Retrieves user-created custom categories from cache or storage
    */
   static getCustomCategories(): CustomWordCategory[] {
+    if (this.customCategoriesCache) {
+      return this.customCategoriesCache;
+    }
     try {
+      if (typeof localStorage === 'undefined') return [];
       const data = localStorage.getItem(STORAGE_KEY);
       if (!data) return [];
       const parsed = JSON.parse(data);
       if (Array.isArray(parsed)) {
-        return parsed.map(c => ({ ...c, isCustom: true }));
+        this.customCategoriesCache = parsed.map(c => ({ ...c, isCustom: true }));
+        return this.customCategoriesCache;
       }
-    } catch (e) {
-      console.warn('Failed to load custom word categories from localStorage:', e);
+    } catch {
+      // Ignored fallback
     }
     return [];
   }
 
   /**
-   * Saves a new or updated custom category to localStorage
+   * Saves a new or updated custom category to storage
    */
   static saveCategory(category: {
     id?: string;
@@ -55,7 +62,7 @@ export class WordListService {
     category?: string;
     words: string[];
   }): CustomWordCategory {
-    const customList = this.getCustomCategories();
+    const customList = [...this.getCustomCategories()];
     const { words: cleanedWords } = sanitizeWordList(category.words);
 
     if (!category.name || category.name.trim().length === 0) {
@@ -95,10 +102,13 @@ export class WordListService {
       customList.push(savedItem);
     }
 
+    this.customCategoriesCache = customList;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(customList));
-    } catch (e) {
-      console.error('Failed to save category to localStorage:', e);
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(customList));
+      }
+    } catch {
+      // Memory cache preserved
     }
 
     return savedItem;
@@ -112,12 +122,14 @@ export class WordListService {
     const filtered = customList.filter(c => c.id !== id);
     if (filtered.length === customList.length) return false;
 
+    this.customCategoriesCache = filtered;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(filtered));
+      }
       return true;
-    } catch (e) {
-      console.error('Failed to update localStorage after delete:', e);
-      return false;
+    } catch {
+      return true;
     }
   }
 

@@ -27,6 +27,8 @@ import { BookEditor } from './components/editor/BookEditor';
 import { SettingsView } from './components/settings/SettingsView';
 import { AiBookPlannerView } from './components/ai/AiBookPlannerView';
 import { KdpPreflightView } from './components/kdp/KdpPreflightView';
+import { KdpBookContentView } from './components/kdp/KdpBookContentView';
+import { KdpBookDetailsView } from './components/kdp/KdpBookDetailsView';
 import { KdpAdminView } from './components/admin/KdpAdminView';
 import { PhasePlaceholder } from './components/common/PhasePlaceholder';
 
@@ -57,6 +59,10 @@ const MainContent: React.FC = () => {
         return <PhasePlaceholder module="pdf-tools" />;
       case 'kdp-checker':
         return <KdpPreflightView />;
+      case 'kdp-content':
+        return <KdpBookContentView />;
+      case 'kdp-details':
+        return <KdpBookDetailsView />;
       case 'admin':
         return <KdpAdminView />;
       case 'assets':
