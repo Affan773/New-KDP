@@ -11,6 +11,7 @@ import {
   UserSettings,
 } from '../types';
 import { IndexedDbService } from './indexedDbService';
+import { GoogleSyncQueue } from './googleSyncQueue';
 
 const STORAGE_KEYS = {
   PROJECTS: 'kdp_studio_projects_v1',
@@ -137,6 +138,12 @@ const DEFAULT_SETTINGS: UserSettings = {
   general: {
     defaultZoom: 1.0,
     defaultProjectView: 'grid',
+  },
+  googleDocsSync: {
+    enabled: false,
+    deleteBehavior: 'delete_linked',
+    autoSyncDebounceMs: 1500,
+    folderName: 'KDP Book & Puzzle Studio',
   },
 };
 
@@ -428,7 +435,7 @@ export class StorageService {
     return projects.find(p => p.id === id) || null;
   }
 
-  public static saveProject(project: Project): void {
+  public static saveProject(project: Project, skipGoogleSync: boolean = false): void {
     const projects = this.getProjects();
     const existingIndex = projects.findIndex(p => p.id === project.id);
     const updated = {
@@ -445,6 +452,15 @@ export class StorageService {
     this.projectsCache = [...projects];
     safeSetItem(STORAGE_KEYS.PROJECTS, JSON.stringify(projects));
     IndexedDbService.put('projects', updated).catch(() => {});
+
+    // Phase 8: Trigger debounced Google Docs Auto-Sync
+    if (!skipGoogleSync) {
+      try {
+        GoogleSyncQueue.queueProjectSync(updated);
+      } catch (err) {
+        console.warn('Could not queue project sync:', err);
+      }
+    }
   }
 
   public static deleteProject(id: string): void {
@@ -458,6 +474,18 @@ export class StorageService {
 
     if (target?.documentId) {
       this.deleteDocument(target.documentId);
+    }
+
+    // Phase 8: Delete linked Google Doc if setting is delete_linked and doc exists
+    if (target?.googleIntegration?.googleDocumentId) {
+      const settings = this.getSettings();
+      if (settings.googleDocsSync?.deleteBehavior !== 'keep_linked') {
+        GoogleSyncQueue.queueProjectDelete(
+          target.id,
+          target.name,
+          target.googleIntegration.googleDocumentId
+        ).catch(() => {});
+      }
     }
   }
 
@@ -479,6 +507,9 @@ export class StorageService {
       documentId: newDocId,
       status: 'Draft',
     };
+
+    // Rule 33: Stripping googleIntegration creates a fresh new Google Doc upon sync
+    delete (duplicatedProject as any).googleIntegration;
 
     if (originalDoc) {
       const duplicatedDoc: DocumentModel = {

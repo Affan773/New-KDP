@@ -6,3 +6,5 @@ export * from './puzzle';
 export * from './settings';
 export * from './ai';
 export * from './kdp';
+export * from './googleSync';
+export * from './seo';

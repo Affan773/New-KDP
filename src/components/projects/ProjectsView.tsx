@@ -21,10 +21,12 @@ import {
 import { useApp } from '../../context/AppContext';
 import { StorageService } from '../../services/storageService';
 import { Project, ProjectStatus, ProjectType } from '../../types';
+import { GoogleSyncBadge } from '../google/GoogleSyncBadge';
 
 export const ProjectsView: React.FC = () => {
   const {
     projects,
+    settings,
     setIsNewBookWizardOpen,
     openProjectInEditor,
     duplicateProject,
@@ -42,6 +44,7 @@ export const ProjectsView: React.FC = () => {
   const [selectedStatus, setSelectedStatus] = useState<string>('All');
   const [sortBy, setSortBy] = useState<'updated' | 'created' | 'name' | 'pages'>('updated');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
 
   // Rename modal state
   const [renamingProject, setRenamingProject] = useState<Project | null>(null);
@@ -90,12 +93,64 @@ export const ProjectsView: React.FC = () => {
     });
 
   const handleDelete = (project: Project) => {
+    const hasLinkedGoogleDoc = Boolean(project.googleIntegration?.googleDocumentId);
+    const deleteDocBehavior = settings.googleDocsSync?.deleteBehavior !== 'keep_linked';
+
+    if (hasLinkedGoogleDoc && deleteDocBehavior) {
+      showConfirmDialog({
+        title: 'DELETE PROJECT & LINKED GOOGLE DOC?',
+        message: `This will permanently delete:
+• KDP Studio Project: "${project.name}"
+• Linked Google Doc: "KDP — ${project.name}" (ID: ${project.googleIntegration?.googleDocumentId})
+
+This action cannot be undone.`,
+        confirmLabel: 'DELETE PROJECT + GOOGLE DOC',
+        isDestructive: true,
+        onConfirm: () => {
+          deleteProject(project.id);
+          setSelectedProjectIds(prev => prev.filter(id => id !== project.id));
+        },
+      });
+    } else {
+      showConfirmDialog({
+        title: 'DELETE PROJECT?',
+        message: `Are you sure you want to permanently delete "${project.name}"? This action cannot be undone.`,
+        confirmLabel: 'DELETE PROJECT',
+        isDestructive: true,
+        onConfirm: () => {
+          deleteProject(project.id);
+          setSelectedProjectIds(prev => prev.filter(id => id !== project.id));
+        },
+      });
+    }
+  };
+
+  const handleBulkDelete = () => {
+    if (selectedProjectIds.length === 0) return;
+    const selectedProjects = projects.filter(p => selectedProjectIds.includes(p.id));
+    const linkedDocs = selectedProjects.filter(p => p.googleIntegration?.googleDocumentId);
+    const deleteDocBehavior = settings.googleDocsSync?.deleteBehavior !== 'keep_linked';
+
+    let message = `Are you sure you want to delete ${selectedProjects.length} selected book projects?`;
+    if (linkedDocs.length > 0 && deleteDocBehavior) {
+      message = `This will permanently delete ${selectedProjects.length} projects AND ${linkedDocs.length} linked Google Docs from Google Drive:\n\n` +
+        linkedDocs.map(p => `• "KDP — ${p.name}" (${p.googleIntegration?.googleDocumentId})`).join('\n');
+    }
+
     showConfirmDialog({
-      title: 'Delete Book Project',
-      message: `Are you sure you want to permanently delete "${project.name}" and all of its interior pages?`,
-      confirmLabel: 'Delete Book',
+      title: `DELETE ${selectedProjects.length} PROJECTS?`,
+      message,
+      confirmLabel: linkedDocs.length > 0 && deleteDocBehavior ? 'DELETE ALL PROJECTS + DOCS' : 'DELETE PROJECTS',
       isDestructive: true,
-      onConfirm: () => deleteProject(project.id),
+      onConfirm: () => {
+        selectedProjectIds.forEach(id => deleteProject(id));
+        setSelectedProjectIds([]);
+        showToast({
+          type: 'info',
+          title: 'Bulk Deletion Complete',
+          message: `Removed ${selectedProjects.length} projects.`,
+        });
+      },
     });
   };
 
@@ -124,11 +179,21 @@ export const ProjectsView: React.FC = () => {
             Book Projects
           </h1>
           <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
-            Manage your manuscript interiors, page counts, and publishing pipelines.
+            Manage your manuscript interiors, page counts, and publishing pipelines with real-time Google Docs synchronization.
           </p>
         </div>
 
         <div className="flex items-center gap-3">
+          {selectedProjectIds.length > 0 && (
+            <button
+              onClick={handleBulkDelete}
+              className="px-4 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs transition-all shadow-md shadow-rose-500/20 active:scale-95 flex items-center gap-2"
+            >
+              <Trash2 className="w-4 h-4" />
+              <span>Delete Selected ({selectedProjectIds.length})</span>
+            </button>
+          )}
+
           <button
             onClick={() => setIsNewBookWizardOpen(true)}
             className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-neutral-950 font-bold text-xs transition-all shadow-md shadow-amber-500/20 active:scale-95 flex items-center gap-2"
@@ -234,189 +299,253 @@ export const ProjectsView: React.FC = () => {
         </div>
       ) : viewMode === 'grid' ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {filteredProjects.map(project => (
-            <div
-              key={project.id}
-              className="rounded-3xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 overflow-hidden shadow-xs hover:border-neutral-300 dark:hover:border-neutral-700 transition-all flex flex-col justify-between group"
-            >
-              <div className="p-5 flex-1 flex flex-col justify-between">
-                <div>
-                  <div className="flex items-start justify-between gap-3 mb-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400">
-                        {project.type}
-                      </span>
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
-                        {project.kdpSettings.trimSize.name}
-                      </span>
-                    </div>
+          {filteredProjects.map(project => {
+            const isSelected = selectedProjectIds.includes(project.id);
+            return (
+              <div
+                key={project.id}
+                className={`rounded-3xl bg-white dark:bg-neutral-900 border transition-all flex flex-col justify-between group overflow-hidden shadow-xs ${
+                  isSelected
+                    ? 'border-amber-500 ring-2 ring-amber-500/20'
+                    : 'border-neutral-200 dark:border-neutral-800 hover:border-neutral-300 dark:hover:border-neutral-700'
+                }`}
+              >
+                <div className="p-5 flex-1 flex flex-col justify-between">
+                  <div>
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={e => {
+                            if (e.target.checked) {
+                              setSelectedProjectIds(prev => [...prev, project.id]);
+                            } else {
+                              setSelectedProjectIds(prev => prev.filter(id => id !== project.id));
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-amber-500 border-neutral-300 dark:border-neutral-700 focus:ring-amber-500 cursor-pointer"
+                        />
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400">
+                          {project.type}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                          {project.kdpSettings.trimSize.name}
+                        </span>
+                      </div>
 
-                    <button
-                      onClick={() => toggleFavoriteProject(project.id)}
-                      className={`p-1.5 rounded-lg transition-colors ${
-                        project.isFavorite
-                          ? 'text-amber-500 bg-amber-500/10'
-                          : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200'
-                      }`}
-                    >
-                      <Star className="w-4 h-4 fill-current" />
-                    </button>
-                  </div>
-
-                  <h3
-                    onClick={() => openProjectInEditor(project.id)}
-                    className="text-base font-bold text-neutral-900 dark:text-white hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer transition-colors line-clamp-1 mb-1.5"
-                  >
-                    {project.name}
-                  </h3>
-
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2 leading-relaxed mb-4">
-                    {project.description}
-                  </p>
-                </div>
-
-                <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-xs">
-                  <span className="font-mono text-[11px] text-neutral-400">
-                    {project.pageCount} Pages • {project.status}
-                  </span>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => {
-                        setRenamingProject(project);
-                        setNewName(project.name);
-                      }}
-                      className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-                      title="Rename Book"
-                    >
-                      <Edit2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        setActiveProjectId(project.id);
-                        setCurrentRoute('kdp-content');
-                      }}
-                      className="p-1.5 text-neutral-400 hover:text-amber-500 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
-                      title="KDP Content Stage"
-                    >
-                      <BookOpen className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => duplicateProject(project.id)}
-                      className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
-                      title="Duplicate"
-                    >
-                      <Copy className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(project)}
-                      className="p-1.5 text-neutral-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
-                      title="Delete"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      onClick={() => openProjectInEditor(project.id)}
-                      className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-neutral-950 font-bold text-xs transition-colors ml-1"
-                    >
-                      Edit Book
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="rounded-3xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 overflow-hidden shadow-xs">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-neutral-50 dark:bg-neutral-800/60 border-b border-neutral-200 dark:border-neutral-700/80 font-bold text-neutral-500">
-              <tr>
-                <th className="py-3.5 px-4">Title & Type</th>
-                <th className="py-3.5 px-4">Trim & Specs</th>
-                <th className="py-3.5 px-4">Pages</th>
-                <th className="py-3.5 px-4">Status</th>
-                <th className="py-3.5 px-4">Updated</th>
-                <th className="py-3.5 px-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
-              {filteredProjects.map(project => (
-                <tr
-                  key={project.id}
-                  className="hover:bg-neutral-50 dark:hover:bg-neutral-800/40 transition-colors"
-                >
-                  <td className="py-3.5 px-4">
-                    <div className="flex items-center gap-2.5">
-                      <button
-                        onClick={() => toggleFavoriteProject(project.id)}
-                        className={`p-1 rounded ${
-                          project.isFavorite ? 'text-amber-500' : 'text-neutral-300 dark:text-neutral-600'
-                        }`}
-                      >
-                        <Star className="w-3.5 h-3.5 fill-current" />
-                      </button>
-                      <div>
-                        <div
-                          onClick={() => openProjectInEditor(project.id)}
-                          className="font-bold text-neutral-900 dark:text-white hover:text-amber-500 cursor-pointer"
+                      <div className="flex items-center gap-1.5">
+                        <GoogleSyncBadge project={project} compact />
+                        <button
+                          onClick={() => toggleFavoriteProject(project.id)}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            project.isFavorite
+                              ? 'text-amber-500 bg-amber-500/10'
+                              : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200'
+                          }`}
                         >
-                          {project.name}
-                        </div>
-                        <div className="text-[11px] text-neutral-500">{project.type}</div>
+                          <Star className="w-4 h-4 fill-current" />
+                        </button>
                       </div>
                     </div>
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-neutral-700 dark:text-neutral-300">
-                    {project.kdpSettings.trimSize.name} • {project.kdpSettings.bleed}
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-neutral-700 dark:text-neutral-300">
-                    {project.pageCount}p
-                  </td>
-                  <td className="py-3.5 px-4">
-                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400">
-                      {project.status}
+
+                    <h3
+                      onClick={() => openProjectInEditor(project.id)}
+                      className="text-base font-bold text-neutral-900 dark:text-white hover:text-amber-600 dark:hover:text-amber-400 cursor-pointer transition-colors line-clamp-1 mb-1.5"
+                    >
+                      {project.name}
+                    </h3>
+
+                    <p className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2 leading-relaxed mb-4">
+                      {project.description}
+                    </p>
+                  </div>
+
+                  <div className="pt-3 border-t border-neutral-100 dark:border-neutral-800 flex items-center justify-between text-xs">
+                    <span className="font-mono text-[11px] text-neutral-400">
+                      {project.pageCount} Pages • {project.status}
                     </span>
-                  </td>
-                  <td className="py-3.5 px-4 font-mono text-neutral-400 text-[11px]">
-                    {new Date(project.updatedAt).toLocaleDateString()}
-                  </td>
-                  <td className="py-3.5 px-4 text-right">
-                    <div className="flex items-center justify-end gap-1.5">
+
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        onClick={() => {
+                          setRenamingProject(project);
+                          setNewName(project.name);
+                        }}
+                        className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+                        title="Rename Book"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
                       <button
                         onClick={() => {
                           setActiveProjectId(project.id);
                           setCurrentRoute('kdp-content');
                         }}
-                        className="p-1.5 text-neutral-400 hover:text-amber-500"
+                        className="p-1.5 text-neutral-400 hover:text-amber-500 rounded-lg hover:bg-amber-50 dark:hover:bg-amber-950/30 transition-colors"
                         title="KDP Content Stage"
                       >
                         <BookOpen className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => duplicateProject(project.id)}
-                        className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                        className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
                         title="Duplicate"
                       >
                         <Copy className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDelete(project)}
-                        className="p-1.5 text-neutral-400 hover:text-rose-600"
+                        className="p-1.5 text-neutral-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
                         title="Delete"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => openProjectInEditor(project.id)}
-                        className="px-3 py-1 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 font-bold text-xs ml-1"
+                        className="px-3 py-1.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:hover:bg-neutral-200 text-white dark:text-neutral-950 font-bold text-xs transition-colors ml-1"
                       >
-                        Edit
+                        Edit Book
                       </button>
                     </div>
-                  </td>
-                </tr>
-              ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="rounded-3xl bg-white dark:bg-neutral-900 border border-neutral-200 dark:border-neutral-800 overflow-hidden shadow-xs">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-neutral-50 dark:bg-neutral-800/60 border-b border-neutral-200 dark:border-neutral-700/80 font-bold text-neutral-500">
+              <tr>
+                <th className="py-3.5 px-4">
+                  <input
+                    type="checkbox"
+                    checked={
+                      filteredProjects.length > 0 &&
+                      filteredProjects.every(p => selectedProjectIds.includes(p.id))
+                    }
+                    onChange={e => {
+                      if (e.target.checked) {
+                        setSelectedProjectIds(filteredProjects.map(p => p.id));
+                      } else {
+                        setSelectedProjectIds([]);
+                      }
+                    }}
+                    className="w-4 h-4 rounded text-amber-500 border-neutral-300 dark:border-neutral-700 focus:ring-amber-500 cursor-pointer"
+                  />
+                </th>
+                <th className="py-3.5 px-4">Title & Type</th>
+                <th className="py-3.5 px-4">Trim & Specs</th>
+                <th className="py-3.5 px-4">Pages</th>
+                <th className="py-3.5 px-4">Google Docs</th>
+                <th className="py-3.5 px-4">Status</th>
+                <th className="py-3.5 px-4">Updated</th>
+                <th className="py-3.5 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100 dark:divide-neutral-800">
+              {filteredProjects.map(project => {
+                const isSelected = selectedProjectIds.includes(project.id);
+                return (
+                  <tr
+                    key={project.id}
+                    className={`transition-colors ${
+                      isSelected
+                        ? 'bg-amber-500/5 dark:bg-amber-500/10'
+                        : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/40'
+                    }`}
+                  >
+                    <td className="py-3.5 px-4">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedProjectIds(prev => [...prev, project.id]);
+                          } else {
+                            setSelectedProjectIds(prev => prev.filter(id => id !== project.id));
+                          }
+                        }}
+                        className="w-4 h-4 rounded text-amber-500 border-neutral-300 dark:border-neutral-700 focus:ring-amber-500 cursor-pointer"
+                      />
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-2.5">
+                        <button
+                          onClick={() => toggleFavoriteProject(project.id)}
+                          className={`p-1 rounded ${
+                            project.isFavorite ? 'text-amber-500' : 'text-neutral-300 dark:text-neutral-600'
+                          }`}
+                        >
+                          <Star className="w-3.5 h-3.5 fill-current" />
+                        </button>
+                        <div>
+                          <div
+                            onClick={() => openProjectInEditor(project.id)}
+                            className="font-bold text-neutral-900 dark:text-white hover:text-amber-500 cursor-pointer"
+                          >
+                            {project.name}
+                          </div>
+                          <div className="text-[11px] text-neutral-500">{project.type}</div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-neutral-700 dark:text-neutral-300">
+                      {project.kdpSettings.trimSize.name} • {project.kdpSettings.bleed}
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-neutral-700 dark:text-neutral-300">
+                      {project.pageCount}p
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <GoogleSyncBadge project={project} compact />
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400">
+                        {project.status}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 font-mono text-neutral-400 text-[11px]">
+                      {new Date(project.updatedAt).toLocaleDateString()}
+                    </td>
+                    <td className="py-3.5 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          onClick={() => {
+                            setActiveProjectId(project.id);
+                            setCurrentRoute('kdp-content');
+                          }}
+                          className="p-1.5 text-neutral-400 hover:text-amber-500"
+                          title="KDP Content Stage"
+                        >
+                          <BookOpen className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => duplicateProject(project.id)}
+                          className="p-1.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                          title="Duplicate"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(project)}
+                          className="p-1.5 text-neutral-400 hover:text-rose-600"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => openProjectInEditor(project.id)}
+                          className="px-3 py-1 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 font-bold text-xs ml-1"
+                        >
+                          Edit
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

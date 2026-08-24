@@ -19,6 +19,7 @@ export type AppRoute =
   | 'kdp-checker'
   | 'kdp-content'
   | 'kdp-details'
+  | 'kdp-seo'
   | 'admin';
 
 export interface ToastMessage {

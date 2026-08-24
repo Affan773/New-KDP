@@ -1,4 +1,5 @@
 import { MarginConfig, Orientation, TrimSize } from './project';
+import { GoogleDocsSyncSettings } from './googleSync';
 
 export interface UserProfile {
   id: string;
@@ -78,4 +79,5 @@ export interface UserSettings {
   accessibility?: AccessibilityPreferences;
   layout?: LayoutPreferences;
   general?: GeneralPreferences;
+  googleDocsSync?: GoogleDocsSyncSettings;
 }

@@ -22,11 +22,13 @@ import {
   BookMarked,
   ShieldCheck,
   Package,
+  Search,
 } from 'lucide-react';
 import { DEMO_TEMPLATES } from '../../constants/templates';
 import { useApp } from '../../context/AppContext';
 import { StorageService } from '../../services/storageService';
 import { Project, ProjectType } from '../../types';
+import { GoogleSyncBadge } from '../google/GoogleSyncBadge';
 
 export const DashboardView: React.FC = () => {
   const {
@@ -60,13 +62,30 @@ export const DashboardView: React.FC = () => {
   };
 
   const handleDeleteClick = (project: Project) => {
-    showConfirmDialog({
-      title: 'Delete Project',
-      message: `Are you sure you want to permanently delete "${project.name}"? This action cannot be undone.`,
-      confirmLabel: 'Delete Permanently',
-      isDestructive: true,
-      onConfirm: () => deleteProject(project.id),
-    });
+    const hasLinkedGoogleDoc = Boolean(project.googleIntegration?.googleDocumentId);
+    const deleteDocBehavior = settings.googleDocsSync?.deleteBehavior !== 'keep_linked';
+
+    if (hasLinkedGoogleDoc && deleteDocBehavior) {
+      showConfirmDialog({
+        title: 'DELETE PROJECT & LINKED GOOGLE DOC?',
+        message: `This will permanently remove:
+• KDP Studio Project: "${project.name}"
+• Linked Google Doc: "KDP — ${project.name}" (ID: ${project.googleIntegration?.googleDocumentId})
+
+This action cannot be undone.`,
+        confirmLabel: 'DELETE PROJECT + GOOGLE DOC',
+        isDestructive: true,
+        onConfirm: () => deleteProject(project.id),
+      });
+    } else {
+      showConfirmDialog({
+        title: 'DELETE PROJECT?',
+        message: `Are you sure you want to permanently delete "${project.name}"? This action cannot be undone.`,
+        confirmLabel: 'DELETE PROJECT',
+        isDestructive: true,
+        onConfirm: () => deleteProject(project.id),
+      });
+    }
   };
 
   return (
@@ -140,6 +159,12 @@ export const DashboardView: React.FC = () => {
               icon: <FileUp className="w-5 h-5 text-indigo-500" />,
               action: handleImportPdfClick,
               badge: 'Phase 2',
+            },
+            {
+              label: 'KDP SEO Engine',
+              icon: <Search className="w-5 h-5 text-emerald-500" />,
+              action: () => setCurrentRoute('kdp-seo'),
+              badge: 'Phase 9',
             },
             {
               label: 'Templates',
@@ -227,17 +252,20 @@ export const DashboardView: React.FC = () => {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => toggleFavoriteProject(project.id)}
-                    className={`p-1.5 rounded-lg transition-colors ${
-                      project.isFavorite
-                        ? 'text-amber-500 bg-amber-500/10'
-                        : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
-                    }`}
-                    title={project.isFavorite ? 'Remove Favorite' : 'Favorite'}
-                  >
-                    <Star className="w-4 h-4 fill-current" />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    <GoogleSyncBadge project={project} compact />
+                    <button
+                      onClick={() => toggleFavoriteProject(project.id)}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        project.isFavorite
+                          ? 'text-amber-500 bg-amber-500/10'
+                          : 'text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300'
+                      }`}
+                      title={project.isFavorite ? 'Remove Favorite' : 'Favorite'}
+                    >
+                      <Star className="w-4 h-4 fill-current" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="text-xs text-neutral-500 dark:text-neutral-400 line-clamp-2 mb-4 leading-relaxed">

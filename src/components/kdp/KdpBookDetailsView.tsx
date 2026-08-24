@@ -1126,7 +1126,14 @@ export const KdpBookDetailsView: React.FC = () => {
                 Amazon provides 7 slots (up to 50 characters each). Avoid competitor brand names or keyword stuffing.
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => setCurrentRoute('kdp-seo')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold transition-colors shadow-xs"
+              >
+                <Search className="w-3.5 h-3.5" />
+                <span>Open SEO Engine (Phase 9)</span>
+              </button>
               <button
                 onClick={handleGenerateKeywords}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 text-xs font-bold hover:bg-emerald-100 transition-colors"

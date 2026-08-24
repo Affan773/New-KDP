@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProjectType } from '../../types';
+import { GoogleSyncBadge } from '../google/GoogleSyncBadge';
 
 interface HeaderProps {
   onOpenMobileNav?: () => void;
@@ -71,6 +72,12 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMobileNav }) => {
         return 'PDF Production Engine';
       case 'kdp-checker':
         return 'KDP Pre-Flight Inspector';
+      case 'kdp-content':
+        return 'KDP Book Content Engine';
+      case 'kdp-details':
+        return 'KDP Book Details & Metadata';
+      case 'kdp-seo':
+        return 'KDP SEO & Keyword Research';
       case 'admin':
         return 'Enterprise Cloud Admin';
       default:
@@ -96,9 +103,12 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMobileNav }) => {
           {getRouteTitle()}
         </h1>
         {activeProject && currentRoute === 'editor' && (
-          <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-            {activeProject.kdpSettings.trimSize.name} • {activeProject.pageCount} Pages
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+              {activeProject.kdpSettings.trimSize.name} • {activeProject.pageCount} Pages
+            </span>
+            <GoogleSyncBadge project={activeProject} compact />
+          </div>
         )}
       </div>
 

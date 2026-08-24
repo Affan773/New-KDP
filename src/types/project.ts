@@ -6,6 +6,7 @@ import {
   PageType,
 } from './book';
 import { KDPProjectConfig } from './kdp';
+import { GoogleIntegration } from './googleSync';
 
 export type ProjectType =
   | 'Puzzle Book'
@@ -91,6 +92,8 @@ export interface Project {
   bookSettings?: BookProjectSettings;
   // KDP Publishing Foundation (Phase 1)
   kdpConfig?: KDPProjectConfig;
+  // Phase 8 Google Docs Auto-Sync & Delete-Sync
+  googleIntegration?: GoogleIntegration;
 }
 
 export interface DocumentModel {

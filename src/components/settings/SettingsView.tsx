@@ -34,6 +34,7 @@ import { useApp } from '../../context/AppContext';
 import { STANDARD_TRIM_SIZES } from '../../constants/kdp';
 import { StorageService } from '../../services/storageService';
 import { UserSettings } from '../../types';
+import { GoogleDocsSettingsTab } from './GoogleDocsSettingsTab';
 
 export const SettingsView: React.FC = () => {
   const {
@@ -48,7 +49,7 @@ export const SettingsView: React.FC = () => {
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<
-    'general' | 'editor' | 'book' | 'puzzles' | 'layout' | 'accessibility' | 'storage' | 'about'
+    'general' | 'googleDocs' | 'editor' | 'book' | 'puzzles' | 'layout' | 'accessibility' | 'storage' | 'about'
   >('general');
 
   // Local form state cloned from settings
@@ -178,6 +179,7 @@ export const SettingsView: React.FC = () => {
 
   const navTabs: { id: typeof activeTab; label: string; icon: React.ReactNode }[] = [
     { id: 'general', label: 'General & Appearance', icon: <Sliders className="w-4 h-4" /> },
+    { id: 'googleDocs', label: 'Google Docs & Drive', icon: <FileText className="w-4 h-4 text-blue-500" /> },
     { id: 'editor', label: 'Canvas & Editor', icon: <Magnet className="w-4 h-4" /> },
     { id: 'book', label: 'Book & KDP Defaults', icon: <BookOpen className="w-4 h-4" /> },
     { id: 'puzzles', label: 'Puzzle Engine', icon: <Grid3X3 className="w-4 h-4" /> },
@@ -345,6 +347,11 @@ export const SettingsView: React.FC = () => {
                 </label>
               </div>
             </div>
+          )}
+
+          {/* ================= TAB: GOOGLE DOCS & DRIVE ================= */}
+          {activeTab === 'googleDocs' && (
+            <GoogleDocsSettingsTab />
           )}
 
           {/* ================= TAB 2: EDITOR ================= */}

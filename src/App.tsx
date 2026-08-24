@@ -29,6 +29,7 @@ import { AiBookPlannerView } from './components/ai/AiBookPlannerView';
 import { KdpPreflightView } from './components/kdp/KdpPreflightView';
 import { KdpBookContentView } from './components/kdp/KdpBookContentView';
 import { KdpBookDetailsView } from './components/kdp/KdpBookDetailsView';
+import { KdpSeoResearchView } from './components/seo/KdpSeoResearchView';
 import { KdpAdminView } from './components/admin/KdpAdminView';
 import { PhasePlaceholder } from './components/common/PhasePlaceholder';
 
@@ -63,6 +64,8 @@ const MainContent: React.FC = () => {
         return <KdpBookContentView />;
       case 'kdp-details':
         return <KdpBookDetailsView />;
+      case 'kdp-seo':
+        return <KdpSeoResearchView />;
       case 'admin':
         return <KdpAdminView />;
       case 'assets':
