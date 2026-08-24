@@ -15,6 +15,7 @@ import { ErrorBoundary } from './components/common/ErrorBoundary';
 import { ToastContainer } from './components/common/ToastContainer';
 import { ConfirmDialog } from './components/common/ConfirmDialog';
 import { NewBookWizardModal } from './components/projects/NewBookWizardModal';
+import { Project, DocumentModel, TrimSize } from './types/project';
 
 // Views
 import { LandingPage } from './components/landing/LandingPage';
@@ -30,11 +31,139 @@ import { KdpPreflightView } from './components/kdp/KdpPreflightView';
 import { KdpBookContentView } from './components/kdp/KdpBookContentView';
 import { KdpBookDetailsView } from './components/kdp/KdpBookDetailsView';
 import { KdpSeoResearchView } from './components/seo/KdpSeoResearchView';
+import { KdpNicheResearchDashboard } from './components/niche/KdpNicheResearchDashboard';
 import { KdpAdminView } from './components/admin/KdpAdminView';
 import { PhasePlaceholder } from './components/common/PhasePlaceholder';
 
 const MainContent: React.FC = () => {
-  const { currentRoute } = useApp();
+  const {
+    currentRoute,
+    setCurrentRoute,
+    setIsNewBookWizardOpen,
+    activeProject,
+    createProject,
+    openProjectInEditor,
+    showToast,
+  } = useApp();
+
+  const handleCreateBookFromNiche = (nicheData: {
+    niche: string;
+    bookType: string;
+    puzzleType: string;
+    targetAudience: string;
+    theme: string;
+    keywords: string[];
+    suggestedTitle?: string;
+    suggestedSubtitle?: string;
+  }) => {
+    const newProjectId = `proj-${Date.now()}`;
+    const newDocId = `doc-${Date.now()}`;
+    const title =
+      nicheData.suggestedTitle ||
+      `${nicheData.niche} ${nicheData.puzzleType || nicheData.bookType} Book`;
+    const subtitle =
+      nicheData.suggestedSubtitle ||
+      `Fun & Relaxing Puzzles for ${nicheData.targetAudience}`;
+
+    const trimSize: TrimSize = {
+      id: '8.5x11',
+      name: '8.5" × 11"',
+      width: 8.5,
+      height: 11,
+      category: 'Large',
+      isPopular: true,
+    };
+
+    const newProject: Project = {
+      id: newProjectId,
+      name: title,
+      type: (nicheData.bookType as any) || 'Puzzle Book',
+      description: `${subtitle}. Curated for ${nicheData.targetAudience}.`,
+      pageCount: 80,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      status: 'Draft',
+      ownerId: 'user-default-1',
+      isFavorite: false,
+      documentId: newDocId,
+      kdpSettings: {
+        trimSize,
+        orientation: 'Portrait',
+        pageCount: 80,
+        margins: { top: 0.5, bottom: 0.5, left: 0.5, right: 0.5 },
+        bleed: 'No Bleed',
+        paperType: 'White',
+        spineWidthInches: 0.18,
+        coverWidthInches: 17.43,
+        coverHeightInches: 11.25,
+      },
+      metadata: {
+        category: nicheData.puzzleType || 'Word Search',
+        keywords: nicheData.keywords || [],
+      },
+    };
+
+    const initialDoc: DocumentModel = {
+      id: newDocId,
+      projectId: newProjectId,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      pages: [
+        {
+          id: `page-${newProjectId}-1`,
+          pageNumber: 1,
+          backgroundColor: '#FFFFFF',
+          notes: 'Title & Introduction Page',
+          elements: [
+            {
+              id: `el-text-title`,
+              type: 'text',
+              content: title.toUpperCase(),
+              x: 100,
+              y: 200,
+              width: 600,
+              height: 80,
+              fontSize: 32,
+              fontFamily: 'Playfair Display',
+              fontWeight: 'bold',
+              textAlign: 'center',
+              color: '#111827',
+              rotation: 0,
+              opacity: 1,
+              zIndex: 1,
+              locked: false,
+            },
+            {
+              id: `el-text-subtitle`,
+              type: 'text',
+              content: subtitle,
+              x: 120,
+              y: 290,
+              width: 560,
+              height: 50,
+              fontSize: 18,
+              fontFamily: 'Inter',
+              fontWeight: 'normal',
+              textAlign: 'center',
+              color: '#4B5563',
+              rotation: 0,
+              opacity: 1,
+              zIndex: 2,
+              locked: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    createProject(newProject, initialDoc);
+    showToast({
+      type: 'success',
+      title: 'Book Created from Niche Research',
+      message: `Created "${title}" with targeted keywords and specifications.`,
+    });
+    openProjectInEditor(newProjectId);
+  };
 
   const renderView = () => {
     switch (currentRoute) {
@@ -66,6 +195,16 @@ const MainContent: React.FC = () => {
         return <KdpBookDetailsView />;
       case 'kdp-seo':
         return <KdpSeoResearchView />;
+      case 'kdp-niche':
+        return (
+          <KdpNicheResearchDashboard
+            currentProject={activeProject || undefined}
+            onNavigateToSeo={() => {
+              setCurrentRoute('kdp-seo');
+            }}
+            onCreateBookFromNiche={handleCreateBookFromNiche}
+          />
+        );
       case 'admin':
         return <KdpAdminView />;
       case 'assets':

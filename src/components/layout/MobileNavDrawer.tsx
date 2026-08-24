@@ -15,6 +15,8 @@ import {
   PlusCircle,
   BookMarked,
   ExternalLink,
+  Search,
+  Compass,
 } from 'lucide-react';
 import { AppRoute, useApp } from '../../context/AppContext';
 import { Drawer } from '../common/Drawer';
@@ -43,10 +45,12 @@ export const MobileNavDrawer: React.FC<MobileNavDrawerProps> = ({ isOpen, onClos
   ];
 
   const roadmapNavItems: { id: AppRoute; label: string; icon: React.ReactNode; phase: string }[] = [
-    { id: 'ai', label: 'AI Generator', icon: <Sparkles className="w-4 h-4 text-amber-500" />, phase: 'P2' },
+    { id: 'kdp-niche', label: 'KDP Niche & Market', icon: <Compass className="w-4 h-4 text-purple-500" />, phase: 'P11' },
+    { id: 'kdp-seo', label: 'KDP SEO & Keywords', icon: <Search className="w-4 h-4 text-emerald-500" />, phase: 'P10' },
+    { id: 'ai', label: 'AI Generator', icon: <Sparkles className="w-4 h-4 text-amber-500" />, phase: 'Live' },
+    { id: 'kdp-checker', label: 'KDP Pre-Flight', icon: <FileCheck2 className="w-4 h-4 text-emerald-500" />, phase: 'Live' },
+    { id: 'admin', label: 'Enterprise Admin', icon: <Cpu className="w-4 h-4 text-indigo-500" />, phase: 'Live' },
     { id: 'pdf-tools', label: 'PDF Production', icon: <FileCheck2 className="w-4 h-4 text-blue-500" />, phase: 'P2' },
-    { id: 'kdp-checker', label: 'KDP Pre-Flight', icon: <BookMarked className="w-4 h-4 text-emerald-500" />, phase: 'P2' },
-    { id: 'admin', label: 'Enterprise Admin', icon: <Cpu className="w-4 h-4 text-indigo-500" />, phase: 'P3' },
   ];
 
   const bottomNavItems: { id: AppRoute; label: string; icon: React.ReactNode }[] = [

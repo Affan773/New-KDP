@@ -8,3 +8,4 @@ export * from './ai';
 export * from './kdp';
 export * from './googleSync';
 export * from './seo';
+export * from './niche';

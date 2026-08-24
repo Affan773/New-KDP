@@ -20,6 +20,7 @@ import {
   BookMarked,
   FileText,
   Search,
+  Compass,
 } from 'lucide-react';
 import { AppRoute, useApp } from '../../context/AppContext';
 
@@ -38,9 +39,10 @@ export const Sidebar: React.FC = () => {
   ];
 
   const roadmapNavItems: { id: AppRoute; label: string; icon: React.ReactNode; phase: string }[] = [
+    { id: 'kdp-niche', label: 'KDP Niche & Market', icon: <Compass className="w-4 h-4 text-purple-500" />, phase: 'P11' },
+    { id: 'kdp-seo', label: 'KDP SEO & Keywords', icon: <Search className="w-4 h-4 text-emerald-500" />, phase: 'P10' },
     { id: 'kdp-content', label: 'KDP Book Content', icon: <BookMarked className="w-4 h-4 text-amber-500" />, phase: 'P3' },
     { id: 'kdp-details', label: 'KDP Book Details', icon: <FileText className="w-4 h-4 text-blue-500" />, phase: 'P4' },
-    { id: 'kdp-seo', label: 'KDP SEO & Keywords', icon: <Search className="w-4 h-4 text-emerald-500" />, phase: 'P9' },
     { id: 'ai', label: 'AI Generator', icon: <Sparkles className="w-4 h-4 text-amber-500" />, phase: 'Live' },
     { id: 'kdp-checker', label: 'KDP Pre-Flight', icon: <FileCheck2 className="w-4 h-4 text-emerald-500" />, phase: 'Live' },
     { id: 'admin', label: 'KDP Analytics', icon: <Cpu className="w-4 h-4 text-indigo-500" />, phase: 'Live' },

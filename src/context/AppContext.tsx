@@ -20,6 +20,7 @@ export type AppRoute =
   | 'kdp-content'
   | 'kdp-details'
   | 'kdp-seo'
+  | 'kdp-niche'
   | 'admin';
 
 export interface ToastMessage {

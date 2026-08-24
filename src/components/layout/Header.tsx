@@ -78,6 +78,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMobileNav }) => {
         return 'KDP Book Details & Metadata';
       case 'kdp-seo':
         return 'KDP SEO & Keyword Research';
+      case 'kdp-niche':
+        return 'KDP Niche & Market Research';
       case 'admin':
         return 'Enterprise Cloud Admin';
       default:
